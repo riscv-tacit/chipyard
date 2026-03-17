@@ -602,7 +602,6 @@ class WithGCDIOPunchthrough extends OverrideIOBinder({
 class WithTraceSinkRawBytePunchthrough extends OverrideIOBinder({
   (system: CanHaveTraceSinkRawByte) => {
     val tacit_byte_ports = system.tacit_bytes.zipWithIndex.map { case (s, i) => 
-      // a seq of decoupled bytes
       val tacit_byte = IO(new TraceSinkRawByteBundle).suggestName(s"tacit_byte_${i}")
       tacit_byte <> s
       TraceSinkRawBytePort(() => tacit_byte)

@@ -255,6 +255,16 @@ class FireSimLargeBoomConfig extends Config(
   new WithFireSimConfigTweaks ++
   new chipyard.LargeBoomV3Config)
 
+class FireSimLargeBoomV4Config extends Config(
+  new WithDefaultFireSimBridges ++
+  new WithFireSimConfigTweaks ++
+  new chipyard.LargeBoomV4Config)
+
+class FireSimMediumBoomV4Config extends Config(
+  new WithDefaultFireSimBridges ++
+  new WithFireSimConfigTweaks ++
+  new chipyard.MediumBoomV4Config)
+
 //********************************************************************
 // Heterogeneous config, base off chipyard's LargeBoomAndRocketConfig
 //********************************************************************
@@ -362,6 +372,12 @@ class FireSimRocketTacitConfig extends Config(
   new WithFireSimConfigTweaks++
   new chipyard.TacitRocketRawByteConfig)
 
+class FireSimRocketTacitNoPTERawByteConfig extends Config(
+  new WithTacitBridge ++
+  new WithDefaultFireSimBridges ++
+  new WithFireSimConfigTweaks++
+  new chipyard.TacitRocketNoPTERawByteConfig)
+
 class FireSimDualRocketTacitConfig extends Config(
   new WithTacitBridge ++
   new WithDefaultFireSimBridges ++
@@ -380,3 +396,54 @@ class FireSimRocketTacitPrefetchConfig extends Config(
   new WithDefaultFireSimBridges ++
   new WithFireSimConfigTweaks++
   new chipyard.TacitRocketRawBytePrefetchConfig)
+
+class FireSimLargeBoomV3TacitRawByteConfig extends Config(
+  new WithTacitBridge ++
+  new WithDefaultFireSimBridges ++
+  new WithFireSimConfigTweaks++
+  new chipyard.TacitLargeBoomV3RawByteConfig)
+
+class FireSimHighPerfLargeBoomV3TacitRawByteConfig extends Config(
+  new WithTacitBridge ++
+  new WithDefaultFireSimBridges ++
+  new WithFireSimHighPerfConfigTweaks ++
+  new WithFireSimConfigTweaks++
+  new chipyard.TacitLargeBoomV3RawByteConfig)
+
+class FireSimMegaBoomV3TacitRawByteConfig extends Config(
+  new WithTacitBridge ++
+  new WithDefaultFireSimBridges ++
+  new WithFireSimConfigTweaks++
+  new chipyard.TacitMegaBoomV3RawByteConfig)
+
+class FireSimMegaBoomV3TacitRawByteShyDMAConfig extends Config(
+  new WithTacitBridge ++
+  new WithDefaultFireSimBridges ++
+  new WithFireSimConfigTweaks++
+  new chipyard.TacitMegaBoomV3RawByteShyDMAConfig)
+
+class FireSimHighPerfMegaBoomV3TacitRawByteConfig extends Config(
+  new WithTacitBridge ++
+  new WithDefaultFireSimBridges ++
+  // add High Perf Config Tweaks
+  new WithFireSimHighPerfConfigTweaks ++
+  new WithFireSimConfigTweaks++
+  new chipyard.TacitMegaBoomV3RawByteConfig)
+
+class FireSimLargeBoomV3NoASIDTacitRawByteConfig extends Config(
+  new WithTacitBridge ++
+  new WithDefaultFireSimBridges ++
+  new WithFireSimConfigTweaks++
+  new chipyard.TacitLargeBoomV3NoASIDRawByteConfig)
+
+class FireSimMediumBoomV3TacitRawByteConfig extends Config(
+  new WithTacitBridge ++
+  new WithDefaultFireSimBridges ++
+  new WithFireSimConfigTweaks++
+  new chipyard.TacitMediumBoomV3RawByteConfig)
+
+class FireSimMediumBoomV4TacitRawByteConfig extends Config(
+  new WithTacitBridge ++
+  new WithDefaultFireSimBridges ++
+  new WithFireSimConfigTweaks++
+  new chipyard.TacitMediumBoomV4RawByteConfig)

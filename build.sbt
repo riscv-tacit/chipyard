@@ -375,8 +375,9 @@ lazy val nvdla = withInitCheck((project in file("generators/nvdla")), "nvdla")
   .settings(commonSettings)
 
 lazy val tacit = withInitCheck((project in file("generators/tacit")), "tacit")
-  .dependsOn(rocketchip, shuttle, testchipip)
+  .dependsOn(rocketchip, shuttle, boom, testchipip)
   .settings(libraryDependencies ++= rocketLibDeps.value)
+  .settings(libraryDependencies += "edu.berkeley.cs" %% "chiseltest" % chiselTestVersion % "test")
   .settings(commonSettings)
 
 lazy val caliptra_aes = withInitCheck((project in file("generators/caliptra-aes-acc")), "caliptra-aes-acc")

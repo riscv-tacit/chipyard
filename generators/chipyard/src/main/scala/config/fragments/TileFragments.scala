@@ -61,6 +61,26 @@ class WithL2TLBs(entries: Int) extends Config((site, here, up) => {
   }
 })
 
+class WithPTECacheEntries(entries: Int = 8) extends Config((site, here, up) => {
+  case TilesLocated(InSubsystem) => up(TilesLocated(InSubsystem), site) map {
+    case tp: RocketTileAttachParams => tp.copy(tileParams = tp.tileParams.copy(
+      core = tp.tileParams.core.copy(nPTECacheEntries = entries)))
+    case other => other
+  }
+})
+
+class WithNL2TLBEntries(entries: Int = 512) extends Config((site, here, up) => {
+  case TilesLocated(InSubsystem) => up(TilesLocated(InSubsystem), site) map {
+    case tp: RocketTileAttachParams => tp.copy(tileParams = tp.tileParams.copy(
+      core = tp.tileParams.core.copy(nL2TLBEntries = entries)))
+    case tp: boom.v3.common.BoomTileAttachParams => tp.copy(tileParams = tp.tileParams.copy(
+      core = tp.tileParams.core.copy(nL2TLBEntries = entries)))
+    case tp: boom.v4.common.BoomTileAttachParams => tp.copy(tileParams = tp.tileParams.copy(
+      core = tp.tileParams.core.copy(nL2TLBEntries = entries)))
+    case other => other
+  }
+})
+
 class WithTraceIO extends Config((site, here, up) => {
   case TilesLocated(InSubsystem) => up(TilesLocated(InSubsystem), site) map { tp =>
     val updated = tp match {
@@ -107,6 +127,10 @@ class WithTraceArbiterMonitor extends Config((site, here, up) => {
     case tp: RocketTileAttachParams => tp.copy(tileParams = tp.tileParams.copy(
       traceParams = Some(tp.tileParams.traceParams.get.copy(useArbiterMonitor = true))))
     case tp: ShuttleTileAttachParams => tp.copy(tileParams = tp.tileParams.copy(
+      traceParams = Some(tp.tileParams.traceParams.get.copy(useArbiterMonitor = true))))
+    case tp: boom.v3.common.BoomTileAttachParams => tp.copy(tileParams = tp.tileParams.copy(
+      traceParams = Some(tp.tileParams.traceParams.get.copy(useArbiterMonitor = true))))
+    case tp: boom.v4.common.BoomTileAttachParams => tp.copy(tileParams = tp.tileParams.copy(
       traceParams = Some(tp.tileParams.traceParams.get.copy(useArbiterMonitor = true))))
   }
 })
@@ -175,9 +199,9 @@ class WithAsidLen(n: Int = 0) extends Config((site, here, up) => {
   case TilesLocated(InSubsystem) => up(TilesLocated(InSubsystem), site) map {
     case tp: RocketTileAttachParams => tp.copy(tileParams = tp.tileParams.copy(core =
       tp.tileParams.core.copy(asidLen = n)))
-    // case tp: boom.v3.common.BoomTileAttachParams => tp.copy(tileParams = tp.tileParams.copy(core =
-      // tp.tileParams.core.copy(nAsidBits = n)))
-    // case tp: boom.v4.common.BoomTileAttachParams => tp.copy(tileParams = tp.tileParams.copy(core =
-      // tp.tileParams.core.copy(nAsidBits = n)))
+    case tp: boom.v3.common.BoomTileAttachParams => tp.copy(tileParams = tp.tileParams.copy(core =
+      tp.tileParams.core.copy(asidLen = n)))
+    case tp: boom.v4.common.BoomTileAttachParams => tp.copy(tileParams = tp.tileParams.copy(core =
+      tp.tileParams.core.copy(asidLen = n)))
   }
 })

@@ -45,3 +45,5 @@ class WithCharacterCountRoCC(op: OpcodeSet = OpcodeSet.custom2) extends Config((
     counter
   })
 })
+
+// Use boom.v3.common.WithSoftwarePrefetchRoCC for BOOM prefetch support

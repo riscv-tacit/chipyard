@@ -403,6 +403,18 @@ class FireSimLargeBoomV3TacitRawByteConfig extends Config(
   new WithFireSimConfigTweaks++
   new chipyard.TacitLargeBoomV3RawByteConfig)
 
+class FireSimDualLargeBoomV3TacitRawByteConfig extends Config(
+  new WithTacitBridge ++
+  new WithDefaultFireSimBridges ++
+  new WithFireSimConfigTweaks++
+  new chipyard.TacitDualLargeBoomV3RawByteConfig)
+
+class FireSimDualMegaBoomV3TacitRawByteConfig extends Config(
+  new WithTacitBridge ++
+  new WithDefaultFireSimBridges ++
+  new WithFireSimConfigTweaks++
+  new chipyard.TacitDualMegaBoomV3RawByteConfig)
+
 class FireSimHighPerfLargeBoomV3TacitRawByteConfig extends Config(
   new WithTacitBridge ++
   new WithDefaultFireSimBridges ++
@@ -415,6 +427,46 @@ class FireSimMegaBoomV3TacitRawByteConfig extends Config(
   new WithDefaultFireSimBridges ++
   new WithFireSimConfigTweaks++
   new chipyard.TacitMegaBoomV3RawByteConfig)
+
+class FireSimMegaBoomV3PrefetchRoCCTacitRawByteConfig extends Config(
+  new WithTacitBridge ++
+  new WithDefaultFireSimBridges ++
+  new WithFireSimConfigTweaks++
+  new chipyard.TacitMegaBoomV3PrefetchRoCCRawByteConfig)
+
+class FireSimMediumBoomV3PrefetchRoCCTacitRawByteConfig extends Config(
+  new WithTacitBridge ++
+  new WithDefaultFireSimBridges ++
+  new WithFireSimConfigTweaks++
+  new chipyard.TacitMediumBoomV3PrefetchRoCCRawByteConfig)
+
+// DIAGNOSTIC: same as above but with BOOM fast-load-use DISABLED (no spec_ld_wakeup
+// broadcast -> no poison machinery). Tests whether fast-load-use/poison is the mcf
+// sw-prefetch wedge root. If mcf passes here, engineer a narrow fast-load-use fix.
+class FireSimMediumBoomV3PrefetchRoCCNoFLUTacitRawByteConfig extends Config(
+  new boom.v3.common.WithBoomFastLoadUse(false) ++
+  new FireSimMediumBoomV3PrefetchRoCCTacitRawByteConfig)
+
+
+class FireSimUltraBoomV3PrefetchRoCCTacitRawByteConfig extends Config(
+  new WithTacitBridge ++
+  new WithDefaultFireSimBridges ++
+  new WithFireSimConfigTweaks++
+  new chipyard.TacitUltraBoomV3PrefetchRoCCRawByteConfig)
+
+// 3-wide BOOM + prefetch RoCC + Tacit tracing (width-study point)
+class FireSimLargeBoomV3PrefetchRoCCTacitRawByteConfig extends Config(
+  new WithTacitBridge ++
+  new WithDefaultFireSimBridges ++
+  new WithFireSimConfigTweaks++
+  new chipyard.TacitLargeBoomV3PrefetchRoCCRawByteConfig)
+
+// Vanilla 4-wide BOOM v3: NO Tacit, NO ASID mixin, NO prefetch (deepsjeng verification;
+// isolates Tacit as the only difference vs FireSimMegaBoomV3TacitRawByteConfig)
+class FireSimMegaBoomV3Config extends Config(
+  new WithDefaultFireSimBridges ++
+  new WithFireSimConfigTweaks ++
+  new chipyard.MegaBoomV3Config)
 
 class FireSimMegaBoomV3TacitRawByteShyDMAConfig extends Config(
   new WithTacitBridge ++

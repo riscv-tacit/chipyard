@@ -89,6 +89,18 @@ class LargeBoomV4Config extends Config(
   new chipyard.config.WithSystemBusWidth(128) ++
   new chipyard.config.AbstractConfig)
 
+class LargeBoomV4NoColumnIssueConfig extends Config(
+  new boom.v4.common.WithNoColumnIssue ++
+  new boom.v4.common.WithNLargeBooms(1) ++                          // large boom config
+  new chipyard.config.WithSystemBusWidth(128) ++
+  new chipyard.config.AbstractConfig)
+
+class LargeBoomV4CommitLogPrintfConfig extends Config(
+  new boom.v4.common.WithBoomCommitLogPrintf ++
+  new boom.v4.common.WithNLargeBooms(1) ++                          // large boom config
+  new chipyard.config.WithSystemBusWidth(128) ++
+  new chipyard.config.AbstractConfig)
+
 class MegaBoomV4Config extends Config(
   new boom.v4.common.WithNMegaBooms(1) ++                           // mega boom config
   new chipyard.config.WithSystemBusWidth(128) ++

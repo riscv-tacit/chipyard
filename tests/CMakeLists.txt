@@ -67,6 +67,7 @@ add_link_options(-T ${LINKER_SCRIPT})
 # Build
 #################################
 
+add_executable(bmiss-ubench bmiss-ubench.c)
 add_executable(pwm pwm.c)
 add_executable(blkdev blkdev.c)
 add_executable(accum accum.c)
@@ -85,6 +86,31 @@ add_executable(gcd gcd.c)
 add_executable(hello hello.c)
 add_executable(mt-hello mt-hello.c)
 add_executable(symmetric symmetric.c)
+add_executable(trace-hello trace-hello.c)
+add_executable(prefetch-test prefetch-test.c)
+add_executable(prefetch-bench prefetch-bench.c)
+# same benchmark, distance sweep bounded by the 16-MSHR prefetch configs
+add_executable(prefetch-bench-sweep prefetch-bench.c)
+target_compile_definitions(prefetch-bench-sweep PRIVATE PF_SWEEP=1)
+add_executable(prefetch-bench-rmw prefetch-bench.c)
+target_compile_definitions(prefetch-bench-rmw PRIVATE PF_SWEEP=1 PF_RMW=1)
+add_executable(prefetch-bench-rmw-w prefetch-bench.c)
+target_compile_definitions(prefetch-bench-rmw-w PRIVATE PF_SWEEP=1 PF_RMW=1 PF_WRITE=1)
+add_executable(mcf-distill mcf-distill.c)
+add_executable(mcf-sweep mcf-sweep.c)
+add_executable(prefetch-vm-test prefetch-vm-test.c)
+add_executable(prefetch-vm-p8 prefetch-vm-test.c)
+target_compile_definitions(prefetch-vm-p8 PRIVATE PHASE8_ONLY)
+add_executable(prefetch-vm-p9 prefetch-vm-test.c)
+target_compile_definitions(prefetch-vm-p9 PRIVATE PHASE9_ONLY)
+add_executable(prefetch-vm-p10 prefetch-vm-test.c)
+target_compile_definitions(prefetch-vm-p10 PRIVATE PHASE10_ONLY)
+add_executable(prefetch-vm-p11 prefetch-vm-test.c)
+target_compile_definitions(prefetch-vm-p11 PRIVATE PHASE11_ONLY)
+add_executable(prefetch-vm-p12 prefetch-vm-test.c)
+target_compile_definitions(prefetch-vm-p12 PRIVATE PHASE12_ONLY)
+add_executable(prefetch-vm-p13 prefetch-vm-test.c)
+target_compile_definitions(prefetch-vm-p13 PRIVATE PHASE13_ONLY)
 
 #################################
 # Disassembly
@@ -123,6 +149,8 @@ add_dump_target(gcd)
 add_dump_target(hello)
 add_dump_target(mt-hello)
 add_dump_target(symmetric)
+add_dump_target(prefetch-test)
+add_dump_target(prefetch-vm-test)
 
 
 # Add custom command to generate spiflash.img from spiflash.py

@@ -601,12 +601,23 @@ class WithGCDIOPunchthrough extends OverrideIOBinder({
 
 class WithTraceSinkRawBytePunchthrough extends OverrideIOBinder({
   (system: CanHaveTraceSinkRawByte) => {
-    val tacit_byte_ports = system.tacit_bytes.zipWithIndex.map { case (s, i) => 
+    val tacit_byte_ports = system.tacit_bytes.zipWithIndex.map { case (s, i) =>
       val tacit_byte = IO(new TraceSinkRawByteBundle).suggestName(s"tacit_byte_${i}")
       tacit_byte <> s
       TraceSinkRawBytePort(() => tacit_byte)
     }
     (tacit_byte_ports, Nil)
+  }
+})
+
+class WithTraceDoctorPunchthrough extends OverrideIOBinder({
+  (system: chipyard.CanHaveTraceDoctorIO) => {
+    val td_ports = system.traceDoctorIOs.zipWithIndex.map { case ((width, io), i) =>
+      val td = IO(Output(new boom.v3.common.BoomTraceDoctorIO(width))).suggestName(s"tracedoctor_${i}")
+      td := io
+      TraceDoctorPort(() => td, width)
+    }
+    (td_ports, Nil)
   }
 })
 

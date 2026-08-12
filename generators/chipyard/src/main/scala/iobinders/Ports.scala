@@ -116,6 +116,9 @@ case class GCDBusyPort     (val getIO: () => Bool)
 case class TraceSinkRawBytePort(val getIO: () => TraceSinkRawByteBundle)
     extends Port[TraceSinkRawByteBundle]
 
+case class TraceDoctorPort (val getIO: () => boom.v3.common.BoomTraceDoctorIO, width: Int)
+    extends Port[boom.v3.common.BoomTraceDoctorIO]
+
 case class OffchipSelPort  (val getIO: () => UInt)
     extends Port[UInt]
 

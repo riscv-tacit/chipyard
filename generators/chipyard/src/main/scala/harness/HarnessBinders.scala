@@ -340,6 +340,12 @@ class WithTraceSinkRawByteHarnessTieOff extends HarnessBinder({
   }
 })
 
+class WithTraceDoctorHarnessTieOff extends HarnessBinder({
+  case (th: HasHarnessInstantiators, port: TraceDoctorPort, chipId: Int) => {
+    // Output-only port: nothing to drive; presence avoids an unbound port.
+  }
+})
+
 class WithOffchipBusSelPlusArg extends HarnessBinder({
   case (th: HasHarnessInstantiators, port: OffchipSelPort, chipId: Int) => {
     val pin = PlusArg("offchip_sel", width=port.io.getWidth)

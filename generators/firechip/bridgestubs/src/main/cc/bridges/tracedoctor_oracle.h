@@ -93,4 +93,66 @@ public:
   void tick(char const *data, unsigned int tokens) override;
 };
 
+// BB-level control-flow trace in tacit_decoder txt-receiver event format:
+//   [timestamp: N] TakenBranch: 0x<from> -> 0x<to>
+// One line per committed CFI, arc = (cfi pc, next committed pc). Kind:
+// is_jal -> InferrableJump, is_jalr -> UninferableJump, is_br -> Taken/
+// NonTakenBranch by fallthrough test (next == pc+2 or pc+4; a taken branch
+// targeting its own fallthrough is indistinguishable and reads non-taken).
+class tracedoctor_bbtrace : public tracedoctor_worker {
+private:
+  bool havePending = false;
+  uint64_t pendingPc = 0;
+  uint64_t pendingTsc = 0;
+  unsigned pendingFlags = 0;
+  uint64_t events = 0;
+
+  void nextCommit(uint64_t tsc, uint64_t pc, unsigned flags);
+
+public:
+  tracedoctor_bbtrace(std::vector<std::string> const &args,
+                      struct traceInfo const &info);
+  ~tracedoctor_bbtrace() override;
+  void tick(char const *data, unsigned int tokens) override;
+};
+
+// Per-BB oracle aggregation: runs the same TIP 4-state DFA but accumulates
+// into basic-block buckets (keyed by BB entry PC, i.e. the first committed
+// PC after a CFI). Computing/Stalled cycles land on the BB executing them,
+// Drained cycles on the refilling BB, and Flushed cycles on the BB of the
+// mispredicted/flushing CFI — the "oracle sense" as opposed to TACIT's
+// delta-to-successor-BB accounting. Emits csv: bb_pc,execs,retired,cycles_x12.
+class tracedoctor_bboracle : public tracedoctor_worker {
+private:
+  struct bbStats {
+    uint64_t execs = 0;
+    uint64_t retired = 0;
+    uint64_t cyclesX12 = 0;
+  };
+  std::unordered_map<uint64_t, bbStats> stats;
+
+  bool havePrev = false;
+  oracleToken prev = {};
+
+  uint64_t currentBb = 0;      // entry PC of the executing BB
+  bool bbBoundary = true;      // next commit opens a new BB
+  uint64_t pendingForwardX12 = 0;
+  uint64_t drainTargetBb = 0;  // Flushed cycles charge here (0 = Drained)
+  uint64_t lastCommitBb = 0;   // BB of the youngest flushing CFI
+  bool lastCommitFlushes = false;
+  bool inDrain = false;
+
+  uint64_t totalX12 = 0, firstTsc = 0, lastTsc = 0, totalCommits = 0;
+
+  void charge(uint64_t bb, uint64_t cyclesX12);
+  void gapCycles(uint64_t cyclesX12);
+  void processToken(oracleToken const &t);
+
+public:
+  tracedoctor_bboracle(std::vector<std::string> const &args,
+                       struct traceInfo const &info);
+  ~tracedoctor_bboracle() override;
+  void tick(char const *data, unsigned int tokens) override;
+};
+
 #endif // __TRACEDOCTOR_ORACLE_H_

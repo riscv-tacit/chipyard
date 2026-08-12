@@ -30,6 +30,8 @@ typedef std::map<std::string,
 static tracedoctor_register_t const tracedoctor_register = {
     REGISTER_TRACEDOCTOR_WORKER("dummy", tracedoctor_dummy),
     REGISTER_TRACEDOCTOR_WORKER("filer", tracedoctor_filer),
+    REGISTER_TRACEDOCTOR_WORKER("bboracle", tracedoctor_bboracle),
+    REGISTER_TRACEDOCTOR_WORKER("bbtrace", tracedoctor_bbtrace),
     REGISTER_TRACEDOCTOR_WORKER("insttrace", tracedoctor_insttrace),
     REGISTER_TRACEDOCTOR_WORKER("oracle", tracedoctor_oracle),
 };

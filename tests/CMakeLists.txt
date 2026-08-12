@@ -68,6 +68,7 @@ add_link_options(-T ${LINKER_SCRIPT})
 #################################
 
 add_executable(bmiss-ubench bmiss-ubench.c)
+add_executable(trace-bmiss-fsim trace-bmiss-fsim.c)
 add_executable(pwm pwm.c)
 add_executable(blkdev blkdev.c)
 add_executable(accum accum.c)

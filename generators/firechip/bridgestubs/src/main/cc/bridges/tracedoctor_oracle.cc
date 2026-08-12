@@ -50,10 +50,27 @@ void tracedoctor_insttrace::tick(char const *data, unsigned int tokens) {
 
 tracedoctor_bboracle::tracedoctor_bboracle(std::vector<std::string> const &args,
                                            struct traceInfo const &info)
-    : tracedoctor_worker("BBOracle", args, info, 1) {}
+    : tracedoctor_worker("BBOracle", args, info, 1) {
+  fprintf(std::get<freg_descriptor>(fileRegister[0]),
+          "entry_tsc,bb_pc,retired,cycles_x12\n");
+}
 
-void tracedoctor_bboracle::charge(uint64_t bb, uint64_t cyclesX12) {
-  stats[bb].cyclesX12 += cyclesX12;
+void tracedoctor_bboracle::emitInstance(bbInstance const &inst) {
+  if (!inst.valid)
+    return;
+  fprintf(std::get<freg_descriptor>(fileRegister[0]),
+          "%" PRIu64 ",0x%" PRIx64 ",%" PRIu64 ",%" PRIu64 "\n", inst.entryTsc,
+          inst.pc, inst.retired, inst.cyclesX12);
+  instances++;
+}
+
+void tracedoctor_bboracle::closeInstance(uint64_t entryTsc, uint64_t pc) {
+  emitInstance(open);
+  open = bbInstance{true, entryTsc, pc, 0, 0};
+}
+
+void tracedoctor_bboracle::chargeFlushed(uint64_t cyclesX12) {
+  open.cyclesX12 += cyclesX12;
   totalX12 += cyclesX12;
 }
 
@@ -61,9 +78,9 @@ void tracedoctor_bboracle::charge(uint64_t bb, uint64_t cyclesX12) {
 void tracedoctor_bboracle::gapCycles(uint64_t cyclesX12) {
   if (cyclesX12 == 0)
     return;
-  if (prev.robEmpty() && drainTargetBb) { // Flushed: BB of the flushing CFI
-    charge(drainTargetBb, cyclesX12);
-  } else { // Stalled/Drained: forward to the BB of the next commit
+  if (prev.robEmpty() && drainActive) { // Flushed
+    chargeFlushed(cyclesX12);
+  } else { // Stalled/Drained: forward to the instance of the next commit
     pendingForwardX12 += cyclesX12;
   }
 }
@@ -79,10 +96,11 @@ void tracedoctor_bboracle::processToken(oracleToken const &t) {
 
   if (t.robEmpty() && !inDrain) {
     inDrain = true;
-    drainTargetBb = lastCommitFlushes ? lastCommitBb : 0;
+    drainActive = lastCommitFlushes;
+    lastCommitFlushes = false; // consumed: a further empty period is Drained
   } else if (!t.robEmpty()) {
     inDrain = false;
-    drainTargetBb = 0;
+    drainActive = false;
   }
 
   if (t.committing()) {
@@ -93,33 +111,33 @@ void tracedoctor_bboracle::processToken(oracleToken const &t) {
     for (unsigned s = 0; s < 4; s++) {
       if (!t.archValid(s))
         continue;
-      if (bbBoundary) { // this commit opens a new BB
-        currentBb = t.pc[s];
-        stats[currentBb].execs++;
+      if (bbBoundary) { // this commit opens a new instance
+        closeInstance(t.tsc(), t.pc[s]);
         bbBoundary = false;
       }
-      if (first) { // forward-pending resolves to the oldest commit's BB
+      if (first) { // forward-pending resolves to the newest open instance
         if (pendingForwardX12) {
-          charge(currentBb, pendingForwardX12);
+          open.cyclesX12 += pendingForwardX12;
+          totalX12 += pendingForwardX12;
           pendingForwardX12 = 0;
         }
         first = false;
       }
-      stats[currentBb].retired++;
-      charge(currentBb, 12 / n);
+      open.retired++;
+      open.cyclesX12 += 12 / n;
+      totalX12 += 12 / n;
       totalCommits++;
       unsigned const f = t.slotFlags(s);
       if (f & (0x20 /*bmiss*/ | 0x10 /*flush_on_commit*/)) {
         lastCommitFlushes = true;
-        lastCommitBb = currentBb;
       } else if (f & F_CFI) {
         lastCommitFlushes = false;
       }
-      if (f & F_CFI) // CFI terminates the BB
+      if (f & F_CFI) // CFI terminates the instance
         bbBoundary = true;
     }
-  } else if (t.robEmpty() && drainTargetBb) {
-    charge(drainTargetBb, 12);
+  } else if (t.robEmpty() && drainActive) {
+    chargeFlushed(12);
   } else {
     pendingForwardX12 += 12;
   }
@@ -135,20 +153,12 @@ void tracedoctor_bboracle::tick(char const *data, unsigned int tokens) {
 }
 
 tracedoctor_bboracle::~tracedoctor_bboracle() {
-  FILE *f = std::get<freg_descriptor>(fileRegister[0]);
-  fprintf(f, "bb_pc,execs,retired,cycles_x12\n");
-  std::vector<std::pair<uint64_t, bbStats>> sorted(stats.begin(), stats.end());
-  std::sort(sorted.begin(), sorted.end(), [](auto &a, auto &b) {
-    return a.second.cyclesX12 > b.second.cyclesX12;
-  });
-  for (auto &[pc, st] : sorted) {
-    fprintf(f, "0x%" PRIx64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 "\n", pc,
-            st.execs, st.retired, st.cyclesX12);
-  }
+  emitInstance(open);
   fprintf(stdout,
-          "%s: bbs(%zu), commits(%" PRIu64 "), attributed_x12(%" PRIu64
-          ") span_x12(%" PRIu64 ") unresolved_fwd(%" PRIu64 ")\n",
-          tracerName.c_str(), stats.size(), totalCommits, totalX12,
+          "%s: instances(%" PRIu64 "), commits(%" PRIu64
+          "), attributed_x12(%" PRIu64 ") span_x12(%" PRIu64
+          ") unresolved_fwd(%" PRIu64 ")\n",
+          tracerName.c_str(), instances, totalCommits, totalX12,
           12 * (lastTsc - firstTsc + 1), pendingForwardX12);
 }
 

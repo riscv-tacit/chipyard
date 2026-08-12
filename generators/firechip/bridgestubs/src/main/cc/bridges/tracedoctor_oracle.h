@@ -116,35 +116,44 @@ public:
   void tick(char const *data, unsigned int tokens) override;
 };
 
-// Per-BB oracle aggregation: runs the same TIP 4-state DFA but accumulates
-// into basic-block buckets (keyed by BB entry PC, i.e. the first committed
-// PC after a CFI). Computing/Stalled cycles land on the BB executing them,
-// Drained cycles on the refilling BB, and Flushed cycles on the BB of the
-// mispredicted/flushing CFI — the "oracle sense" as opposed to TACIT's
-// delta-to-successor-BB accounting. Emits csv: bb_pc,execs,retired,cycles_x12.
+// Per-BB-instance oracle attribution: runs the same TIP 4-state DFA but
+// accounts into dynamic basic-block instances (opened by the first commit
+// after a CFI, closed by the next CFI). Computing/Stalled cycles land on
+// the executing instance, Drained cycles on the refilling instance, and
+// Flushed cycles on the instance containing the mispredicted/flushing
+// commit — the "oracle sense", vs TACIT's delta-to-successor accounting.
+// Emits one record per instance: entry_tsc,bb_pc,retired,cycles_x12.
+// Instances close lazily (at the next commit), so all Flushed charges
+// target the still-open flusher instance; lastCommitFlushes is consumed
+// at drain onset so a subsequent refill-then-empty reads Drained.
 class tracedoctor_bboracle : public tracedoctor_worker {
 private:
-  struct bbStats {
-    uint64_t execs = 0;
+  struct bbInstance {
+    bool valid = false;
+    uint64_t entryTsc = 0;
+    uint64_t pc = 0;
     uint64_t retired = 0;
     uint64_t cyclesX12 = 0;
   };
-  std::unordered_map<uint64_t, bbStats> stats;
+  bbInstance open; // currently executing instance (closes lazily at the
+                   // next commit, so a terminating CFI's flush cycles land
+                   // here during the drain)
 
   bool havePrev = false;
   oracleToken prev = {};
 
-  uint64_t currentBb = 0;      // entry PC of the executing BB
-  bool bbBoundary = true;      // next commit opens a new BB
+  bool bbBoundary = true; // next commit opens a new instance
   uint64_t pendingForwardX12 = 0;
-  uint64_t drainTargetBb = 0;  // Flushed cycles charge here (0 = Drained)
-  uint64_t lastCommitBb = 0;   // BB of the youngest flushing CFI
+  bool drainActive = false; // drain classified Flushed
   bool lastCommitFlushes = false;
   bool inDrain = false;
 
   uint64_t totalX12 = 0, firstTsc = 0, lastTsc = 0, totalCommits = 0;
+  uint64_t instances = 0;
 
-  void charge(uint64_t bb, uint64_t cyclesX12);
+  void emitInstance(bbInstance const &inst);
+  void closeInstance(uint64_t entryTsc, uint64_t pc);
+  void chargeFlushed(uint64_t cyclesX12);
   void gapCycles(uint64_t cyclesX12);
   void processToken(oracleToken const &t);
 

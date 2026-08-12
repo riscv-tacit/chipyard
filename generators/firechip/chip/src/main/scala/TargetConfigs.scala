@@ -364,6 +364,16 @@ class FireSimLargeBoomSV39CospikeConfig extends Config(
   new chipyard.LargeBoomV3Config)
 
 //**********************************************************************************
+// TraceDoctor oracle configurations
+//*********************************************************************************/
+class FireSimSmallBoomV3TraceDoctorConfig extends Config(
+  new WithTraceDoctorBridge ++
+  new WithDefaultFireSimBridges ++
+  new WithFireSimConfigTweaks ++
+  new chipyard.WithBoomTraceDoctor(512) ++
+  new chipyard.SmallBoomV3Config)
+
+//**********************************************************************************
 // Tacit Configurations
 //*********************************************************************************/
 class FireSimRocketTacitConfig extends Config(
@@ -433,6 +443,15 @@ class FireSimMegaBoomV3PrefetchRoCCTacitRawByteConfig extends Config(
   new WithDefaultFireSimBridges ++
   new WithFireSimConfigTweaks++
   new chipyard.TacitMegaBoomV3PrefetchRoCCRawByteConfig)
+
+// 4-wide + prefetch RoCC with the prefetch plumbing the Medium config has
+// (commit-to-L1 + 16 dcache MSHRs). The plain Mega prefetch config above inherits
+// park mode and nMSHRs=8, on which software prefetch measured a LOSS in VCS.
+class FireSimMegaBoomV3PrefetchRoCCCommitTacitRawByteConfig extends Config(
+  new WithTacitBridge ++
+  new WithDefaultFireSimBridges ++
+  new WithFireSimConfigTweaks++
+  new chipyard.TacitMegaBoomV3PrefetchRoCCCommitRawByteConfig)
 
 class FireSimMediumBoomV3PrefetchRoCCTacitRawByteConfig extends Config(
   new WithTacitBridge ++

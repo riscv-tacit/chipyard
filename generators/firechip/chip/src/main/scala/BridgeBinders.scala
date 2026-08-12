@@ -147,6 +147,18 @@ class WithTacitBridge extends HarnessBinder({
   }
 })
 
+class WithTraceDoctorBridge extends HarnessBinder({
+  case (th: FireSim, port: TraceDoctorPort, chipId: Int) => {
+    val trace = Wire(new firechip.bridgeinterfaces.TraceDoctorTraceIO(port.width))
+    trace.valid := port.io.valid
+    trace.bits  := port.io.bits
+    // Global trigger visibility for the driver's 'tracerv' trigger mode
+    val trigger = WireDefault(true.B)
+    midas.targetutils.TriggerSink(trigger)
+    TraceDoctorBridge(th.harnessBinderClock, trace, th.harnessBinderReset.asBool, trigger)(th.p)
+  }
+})
+
 // Shorthand to register all of the provided bridges above
 class WithDefaultFireSimBridges extends Config(
   new WithTSIBridgeAndHarnessRAMOverSerialTL ++

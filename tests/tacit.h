@@ -66,11 +66,30 @@ static inline LTraceSinkDmaType *l_trace_sink_dma_get(uint32_t hart_id) {
   return (LTraceSinkDmaType *)(L_TRACE_SINK_DMA_BASE_ADDRESS + hart_id * 0x1000);
 }
 
+
+/* Oracle window markers: architecturally-unique NOPs (slti x0, x0, imm)
+ * committed at trace start/stop. The TracerV bridge's instruction-match
+ * trigger (+trace-select=3) arms on START and disarms on STOP, gating the
+ * TraceDoctor oracle stream (+tracedoctor-trigger=tracerv) to exactly the
+ * TACIT window -- architecturally pinned, no post-hoc alignment.
+ * START: slti x0, x0, 0x5A5 = 0x5A502013 -> +trace-start=ffffffff5a502013
+ * STOP:  slti x0, x0, 0x5AD = 0x5AD02013 -> +trace-end=ffffffff5ad02013 */
+#define L_TRACE_ORACLE_MARKER_START() asm volatile ("slti x0, x0, 0x5A5")
+/* Stop marker is emitted 4x: TracerV's insn-trigger tracks arm state per
+ * commit slot (upstream RTL bug on superscalar commit: the end-match only
+ * clears the slot it commits in). Four consecutive markers sweep all
+ * commit slots on <=4-wide cores, guaranteeing the armed slot is cleared. */
+#define L_TRACE_ORACLE_MARKER_STOP()  asm volatile (\
+  "slti x0, x0, 0x5AD\n\tslti x0, x0, 0x5AD\n\t"\
+  "slti x0, x0, 0x5AD\n\tslti x0, x0, 0x5AD")
+
 static inline void l_trace_encoder_start(LTraceEncoderType *encoder) {
   SET_BITS(encoder->TR_TE_CTRL, 0x1 << 1);
+  L_TRACE_ORACLE_MARKER_START(); /* after start: oracle window inside tacit window */
 }
 
 static inline void l_trace_encoder_stop(LTraceEncoderType *encoder) {
+  L_TRACE_ORACLE_MARKER_STOP(); /* before stop: oracle window inside tacit window */
   CLEAR_BITS(encoder->TR_TE_CTRL, 0x1 << 1);
 }
 

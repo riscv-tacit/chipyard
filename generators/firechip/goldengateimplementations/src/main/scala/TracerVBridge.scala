@@ -120,16 +120,25 @@ class TracerVBridgeModule(key: TraceBundleWidths)(implicit p: Parameters)
       }
     }
 
-    val triggerInstValVec = RegInit(VecInit(Seq.fill(traces.length)(false.B)))
-    traces.zipWithIndex.foreach { case (trace, i) =>
-      when(trace.valid) {
-        when(!((hostTriggerStartInst ^ trace.insn) & hostTriggerStartInstMask).orR) {
-          triggerInstValVec(i) := true.B
-        }.elsewhen(!((hostTriggerEndInst ^ trace.insn) & hostTriggerEndInstMask).orR) {
-          triggerInstValVec(i) := false.B
-        }
-      }
+    // The instruction trigger must be slot-agnostic: with per-slot arm state,
+    // a start marker committing in slot i and an end marker committing in
+    // slot j != i left slot i armed forever on superscalar commit. Reduce
+    // matches across all slots into a single arm register (start wins when
+    // both match in the same commit group).
+    val triggerInstStartMatch = traces
+      .map(t => t.valid && !((hostTriggerStartInst ^ t.insn) & hostTriggerStartInstMask).orR)
+      .reduce(_ || _)
+    val triggerInstEndMatch = traces
+      .map(t => t.valid && !((hostTriggerEndInst ^ t.insn) & hostTriggerEndInstMask).orR)
+      .reduce(_ || _)
+    val triggerInstArmed = RegInit(false.B)
+    when(triggerInstStartMatch) {
+      triggerInstArmed := true.B
+    }.elsewhen(triggerInstEndMatch) {
+      triggerInstArmed := false.B
     }
+    // Keep the Vec shape consumed by the trigger mux below.
+    val triggerInstValVec = VecInit(Seq.fill(traces.length)(triggerInstArmed))
 
     val trigger = MuxLookup(
       triggerSelector,

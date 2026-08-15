@@ -52,25 +52,28 @@ tracedoctor_bboracle::tracedoctor_bboracle(std::vector<std::string> const &args,
                                            struct traceInfo const &info)
     : tracedoctor_worker("BBOracle", args, info, 1) {
   fprintf(std::get<freg_descriptor>(fileRegister[0]),
-          "entry_tsc,bb_pc,retired,cycles_x12\n");
+          "entry_tsc,bb_pc,retired,computing_x12,stalled_x12,flushed_x12,"
+          "drained_x12\n");
 }
 
 void tracedoctor_bboracle::emitInstance(bbInstance const &inst) {
   if (!inst.valid)
     return;
   fprintf(std::get<freg_descriptor>(fileRegister[0]),
-          "%" PRIu64 ",0x%" PRIx64 ",%" PRIu64 ",%" PRIu64 "\n", inst.entryTsc,
-          inst.pc, inst.retired, inst.cyclesX12);
+          "%" PRIu64 ",0x%" PRIx64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64
+          ",%" PRIu64 ",%" PRIu64 "\n",
+          inst.entryTsc, inst.pc, inst.retired, inst.computingX12,
+          inst.stalledX12, inst.flushedX12, inst.drainedX12);
   instances++;
 }
 
 void tracedoctor_bboracle::closeInstance(uint64_t entryTsc, uint64_t pc) {
   emitInstance(open);
-  open = bbInstance{true, entryTsc, pc, 0, 0};
+  open = bbInstance{true, entryTsc, pc, 0, 0, 0, 0, 0};
 }
 
 void tracedoctor_bboracle::chargeFlushed(uint64_t cyclesX12) {
-  open.cyclesX12 += cyclesX12;
+  open.flushedX12 += cyclesX12;
   totalX12 += cyclesX12;
 }
 
@@ -80,8 +83,10 @@ void tracedoctor_bboracle::gapCycles(uint64_t cyclesX12) {
     return;
   if (prev.robEmpty() && drainActive) { // Flushed
     chargeFlushed(cyclesX12);
-  } else { // Stalled/Drained: forward to the instance of the next commit
-    pendingForwardX12 += cyclesX12;
+  } else if (prev.robEmpty()) { // Drained: forward to the refill instance
+    pendingDrainedX12 += cyclesX12;
+  } else { // Stalled: forward to the next commit's instance
+    pendingStalledX12 += cyclesX12;
   }
 }
 
@@ -116,15 +121,14 @@ void tracedoctor_bboracle::processToken(oracleToken const &t) {
         bbBoundary = false;
       }
       if (first) { // forward-pending resolves to the newest open instance
-        if (pendingForwardX12) {
-          open.cyclesX12 += pendingForwardX12;
-          totalX12 += pendingForwardX12;
-          pendingForwardX12 = 0;
-        }
+        open.stalledX12 += pendingStalledX12;
+        open.drainedX12 += pendingDrainedX12;
+        totalX12 += pendingStalledX12 + pendingDrainedX12;
+        pendingStalledX12 = pendingDrainedX12 = 0;
         first = false;
       }
       open.retired++;
-      open.cyclesX12 += 12 / n;
+      open.computingX12 += 12 / n;
       totalX12 += 12 / n;
       totalCommits++;
       unsigned const f = t.slotFlags(s);
@@ -138,8 +142,10 @@ void tracedoctor_bboracle::processToken(oracleToken const &t) {
     }
   } else if (t.robEmpty() && drainActive) {
     chargeFlushed(12);
+  } else if (t.robEmpty()) {
+    pendingDrainedX12 += 12;
   } else {
-    pendingForwardX12 += 12;
+    pendingStalledX12 += 12;
   }
 
   prev = t;
@@ -159,7 +165,7 @@ tracedoctor_bboracle::~tracedoctor_bboracle() {
           "), attributed_x12(%" PRIu64 ") span_x12(%" PRIu64
           ") unresolved_fwd(%" PRIu64 ")\n",
           tracerName.c_str(), instances, totalCommits, totalX12,
-          12 * (lastTsc - firstTsc + 1), pendingForwardX12);
+          12 * (lastTsc - firstTsc + 1), pendingStalledX12 + pendingDrainedX12);
 }
 
 // ------------------------------------------------------------------ bbtrace
@@ -220,9 +226,13 @@ tracedoctor_oracle::tracedoctor_oracle(std::vector<std::string> const &args,
     : tracedoctor_worker("Oracle", args, info, 1) {}
 
 void tracedoctor_oracle::creditForward(uint64_t pc) {
-  if (pendingForwardX12) {
-    stats[pc].cyclesX12 += pendingForwardX12;
-    pendingForwardX12 = 0;
+  if (pendingStalledX12) {
+    stats[pc].stalledX12 += pendingStalledX12;
+    pendingStalledX12 = 0;
+  }
+  if (pendingDrainedX12) {
+    stats[pc].drainedX12 += pendingDrainedX12;
+    pendingDrainedX12 = 0;
   }
 }
 
@@ -232,14 +242,14 @@ void tracedoctor_oracle::accountGap(uint64_t cyclesX12) {
     return;
   if (prev.robEmpty()) {
     if (drainTargetPc) { // Flushed: backward to the flush causer
-      stats[drainTargetPc].cyclesX12 += cyclesX12;
+      stats[drainTargetPc].flushedX12 += cyclesX12;
       cyclesFlushedX12 += cyclesX12;
     } else { // Drained: forward to the refill instruction
-      pendingForwardX12 += cyclesX12;
+      pendingDrainedX12 += cyclesX12;
       cyclesDrainedX12 += cyclesX12;
     }
   } else { // Stalled: forward to the blocking ROB head (next commit)
-    pendingForwardX12 += cyclesX12;
+    pendingStalledX12 += cyclesX12;
     cyclesStalledX12 += cyclesX12;
   }
 }
@@ -280,7 +290,7 @@ void tracedoctor_oracle::processToken(oracleToken const &t) {
         continue;
       auto &st = stats[t.pc[s]];
       st.retired++;
-      st.cyclesX12 += 12 / n; // Computing: 1/n each (n <= 4 divides 12)
+      st.computingX12 += 12 / n; // Computing: 1/n each (n <= 4 divides 12)
       totalCommits++;
       if (t.bmiss(s)) {
         bmissCommits++;
@@ -299,14 +309,14 @@ void tracedoctor_oracle::processToken(oracleToken const &t) {
     lastCommitPc = flusherPc;
   } else if (t.robEmpty()) {
     if (drainTargetPc) {
-      stats[drainTargetPc].cyclesX12 += 12;
+      stats[drainTargetPc].flushedX12 += 12;
       cyclesFlushedX12 += 12;
     } else {
-      pendingForwardX12 += 12;
+      pendingDrainedX12 += 12;
       cyclesDrainedX12 += 12;
     }
   } else {
-    pendingForwardX12 += 12;
+    pendingStalledX12 += 12;
     cyclesStalledX12 += 12;
   }
 
@@ -322,14 +332,20 @@ void tracedoctor_oracle::tick(char const *data, unsigned int tokens) {
 
 tracedoctor_oracle::~tracedoctor_oracle() {
   FILE *f = std::get<freg_descriptor>(fileRegister[0]);
-  fprintf(f, "pc,retired,cycles_x12\n");
+  fprintf(f, "pc,retired,computing_x12,stalled_x12,flushed_x12,drained_x12\n");
+  auto total = [](pcStats const &s) {
+    return s.computingX12 + s.stalledX12 + s.flushedX12 + s.drainedX12;
+  };
   std::vector<std::pair<uint64_t, pcStats>> sorted(stats.begin(), stats.end());
-  std::sort(sorted.begin(), sorted.end(), [](auto &a, auto &b) {
-    return a.second.cyclesX12 > b.second.cyclesX12;
+  std::sort(sorted.begin(), sorted.end(), [&](auto &a, auto &b) {
+    return total(a.second) > total(b.second);
   });
   for (auto &[pc, st] : sorted) {
-    fprintf(f, "0x%" PRIx64 ",%" PRIu64 ",%" PRIu64 "\n", pc, st.retired,
-            st.cyclesX12);
+    fprintf(f,
+            "0x%" PRIx64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64
+            ",%" PRIu64 "\n",
+            pc, st.retired, st.computingX12, st.stalledX12, st.flushedX12,
+            st.drainedX12);
   }
 
   uint64_t attributedX12 = cyclesComputingX12 + cyclesStalledX12 +
@@ -345,7 +361,7 @@ tracedoctor_oracle::~tracedoctor_oracle() {
           ") span_x12(%" PRIu64 ") unresolved_fwd(%" PRIu64 ")\n",
           tracerName.c_str(), cyclesComputingX12, cyclesStalledX12,
           cyclesFlushedX12, cyclesDrainedX12, attributedX12,
-          12 * (lastTsc - firstTsc + 1), pendingForwardX12);
+          12 * (lastTsc - firstTsc + 1), pendingStalledX12 + pendingDrainedX12);
   fprintf(stdout,
           "%s: CHECK mispredict_events(%" PRIu64 ") bmiss_commits(%" PRIu64
           ") bad_bmiss_type(%" PRIu64 ") tsc_violations(%" PRIu64 ")\n",

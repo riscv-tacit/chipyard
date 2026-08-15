@@ -59,15 +59,20 @@ class tracedoctor_oracle : public tracedoctor_worker {
 private:
   struct pcStats {
     uint64_t retired = 0;
-    uint64_t cyclesX12 = 0; // cycles * 12, exact for 1/n splits, n <= 4
+    // per-state cycles * 12 (exact for 1/n splits, n <= 4)
+    uint64_t computingX12 = 0;
+    uint64_t stalledX12 = 0;
+    uint64_t flushedX12 = 0;
+    uint64_t drainedX12 = 0;
   };
   std::unordered_map<uint64_t, pcStats> stats;
 
   bool havePrev = false;
   oracleToken prev = {};
 
-  // cycles awaiting forward attribution (Stalled/Drained), x12
-  uint64_t pendingForwardX12 = 0;
+  // cycles awaiting forward attribution, split by state at accrual time
+  uint64_t pendingStalledX12 = 0;
+  uint64_t pendingDrainedX12 = 0;
   // backward-attribution target for the current drain (0 = none -> Drained)
   uint64_t drainTargetPc = 0;
   bool inDrain = false;
@@ -133,7 +138,10 @@ private:
     uint64_t entryTsc = 0;
     uint64_t pc = 0;
     uint64_t retired = 0;
-    uint64_t cyclesX12 = 0;
+    uint64_t computingX12 = 0;
+    uint64_t stalledX12 = 0;
+    uint64_t flushedX12 = 0;
+    uint64_t drainedX12 = 0;
   };
   bbInstance open; // currently executing instance (closes lazily at the
                    // next commit, so a terminating CFI's flush cycles land
@@ -143,7 +151,8 @@ private:
   oracleToken prev = {};
 
   bool bbBoundary = true; // next commit opens a new instance
-  uint64_t pendingForwardX12 = 0;
+  uint64_t pendingStalledX12 = 0;
+  uint64_t pendingDrainedX12 = 0;
   bool drainActive = false; // drain classified Flushed
   bool lastCommitFlushes = false;
   bool inDrain = false;

@@ -343,16 +343,26 @@ oracleToken mk_token(uint64_t tsc, unsigned state,
   return t;
 }
 
-std::map<uint64_t, std::pair<uint64_t, uint64_t>> read_oracle_csv(
-    const std::string &path) {
-  std::map<uint64_t, std::pair<uint64_t, uint64_t>> m;
+struct oracleRow {
+  uint64_t retired = 0, comp = 0, stall = 0, flush = 0, drain = 0;
+  bool operator==(oracleRow const &o) const {
+    return retired == o.retired && comp == o.comp && stall == o.stall &&
+           flush == o.flush && drain == o.drain;
+  }
+  uint64_t total() const { return comp + stall + flush + drain; }
+};
+
+std::map<uint64_t, oracleRow> read_oracle_csv(const std::string &path) {
+  std::map<uint64_t, oracleRow> m;
   std::ifstream f(path);
   std::string line;
   std::getline(f, line); // header
   while (std::getline(f, line)) {
-    uint64_t pc, retired, cx12;
-    if (sscanf(line.c_str(), "%lx,%lu,%lu", &pc, &retired, &cx12) == 3)
-      m[pc] = {retired, cx12};
+    uint64_t pc;
+    oracleRow r;
+    if (sscanf(line.c_str(), "%lx,%lu,%lu,%lu,%lu,%lu", &pc, &r.retired,
+               &r.comp, &r.stall, &r.flush, &r.drain) == 6)
+      m[pc] = r;
   }
   return m;
 }
@@ -381,21 +391,26 @@ void test_oracle_ground_truth() {
     w.tick(reinterpret_cast<char *>(toks.data()), toks.size());
   }
   auto m = read_oracle_csv(out);
-  auto expect = [&](uint64_t pc, uint64_t retired, uint64_t cx12) {
-    if (m[pc] != std::make_pair(retired, cx12)) {
-      fprintf(stderr, "FAIL: %s pc=%lx got (%lu,%lu) want (%lu,%lu)\n",
-              __func__, pc, m[pc].first, m[pc].second, retired, cx12);
+  auto expect = [&](uint64_t pc, oracleRow want) {
+    if (!(m[pc] == want)) {
+      fprintf(stderr,
+              "FAIL: %s pc=%lx got (r%lu c%lu s%lu f%lu d%lu) want (r%lu c%lu "
+              "s%lu f%lu d%lu)\n",
+              __func__, pc, m[pc].retired, m[pc].comp, m[pc].stall,
+              m[pc].flush, m[pc].drain, want.retired, want.comp, want.stall,
+              want.flush, want.drain);
       g_failures++;
     }
   };
-  expect(0x1000, 1, 12);
-  expect(0x2000, 1, 120);  // 12 + 9 stalled
-  expect(0x3000, 1, 228);  // 12 + 9 stalled + (1+9) flushed cycles
-  expect(0x4000, 1, 12);
-  expect(0x5000, 1, 120);
-  expect(0x6000, 1, 120);  // 12 + (1+9) drained forward
-  expect(0x7000, 1, 6);    // half a cycle each
-  expect(0x7004, 1, 6);
+  //                 retired comp stall flush drain
+  expect(0x1000, {1, 12, 0, 0, 0});
+  expect(0x2000, {1, 12, 108, 0, 0});   // 9 stalled cycles forward
+  expect(0x3000, {1, 12, 108, 108, 0}); // + (1+9) flushed cycles backward
+  expect(0x4000, {1, 12, 0, 0, 0});
+  expect(0x5000, {1, 12, 108, 0, 0});
+  expect(0x6000, {1, 12, 0, 0, 108});   // (1+9) drained cycles forward
+  expect(0x7000, {1, 6, 0, 0, 0});      // half a cycle each
+  expect(0x7004, {1, 6, 0, 0, 0});
   remove(out.c_str());
   if (!g_failures)
     printf("PASS: %s\n", __func__);
@@ -418,8 +433,8 @@ void test_oracle_replay_real() {
   auto m = read_oracle_csv(out);
   uint64_t retired = 0, cx12 = 0;
   for (auto &[pc, st] : m) {
-    retired += st.first;
-    cx12 += st.second;
+    retired += st.retired;
+    cx12 += st.total();
   }
   printf("%s: pcs=%zu retired=%lu cycles=%.1f\n", __func__, m.size(), retired,
          cx12 / 12.0);

@@ -367,6 +367,14 @@ class FireSimLargeBoomSV39CospikeConfig extends Config(
 // TraceDoctor oracle configurations
 //*********************************************************************************/
 // TACIT and the TraceDoctor oracle capturing the same run side by side
+class FireSimMegaBoomV3TacitTraceDoctorConfig extends Config(
+  new WithTraceDoctorBridge ++
+  new WithTacitBridge ++
+  new WithDefaultFireSimBridges ++
+  new WithFireSimConfigTweaks ++
+  new chipyard.WithBoomTraceDoctor(512) ++
+  new chipyard.TacitMegaBoomV3RawByteConfig)
+
 class FireSimLargeBoomV3TacitTraceDoctorConfig extends Config(
   new WithTraceDoctorBridge ++
   new WithTacitBridge ++

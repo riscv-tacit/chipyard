@@ -133,6 +133,13 @@ public:
 // at drain onset so a subsequent refill-then-empty reads Drained.
 class tracedoctor_bboracle : public tracedoctor_worker {
 private:
+  // 'boundary' arg: charge a commit group's whole cycle to the instance of
+  // its oldest slot instead of splitting 1/n across a BB boundary. Matches
+  // TACIT's integer-delta convention (the boundary cycle belongs to the
+  // closing BB), removing the fractional-attribution floor from epsilon;
+  // sub-BB placement is sanctioned by TIP's granularity rule. Default off
+  // (TIP-faithful 1/n).
+  bool boundaryWhole = false;
   struct bbInstance {
     bool valid = false;
     uint64_t entryTsc = 0;

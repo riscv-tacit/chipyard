@@ -51,6 +51,10 @@ void tracedoctor_insttrace::tick(char const *data, unsigned int tokens) {
 tracedoctor_bboracle::tracedoctor_bboracle(std::vector<std::string> const &args,
                                            struct traceInfo const &info)
     : tracedoctor_worker("BBOracle", args, info, 1) {
+  for (auto &a : args) {
+    if (a == "boundary")
+      boundaryWhole = true;
+  }
   fprintf(std::get<freg_descriptor>(fileRegister[0]),
           "entry_tsc,bb_pc,retired,computing_x12,stalled_x12,flushed_x12,"
           "drained_x12\n");
@@ -125,11 +129,17 @@ void tracedoctor_bboracle::processToken(oracleToken const &t) {
         open.drainedX12 += pendingDrainedX12;
         totalX12 += pendingStalledX12 + pendingDrainedX12;
         pendingStalledX12 = pendingDrainedX12 = 0;
+        if (boundaryWhole) { // whole group cycle to the oldest slot's instance
+          open.computingX12 += 12;
+          totalX12 += 12;
+        }
         first = false;
       }
       open.retired++;
-      open.computingX12 += 12 / n;
-      totalX12 += 12 / n;
+      if (!boundaryWhole) {
+        open.computingX12 += 12 / n;
+        totalX12 += 12 / n;
+      }
       totalCommits++;
       unsigned const f = t.slotFlags(s);
       if (f & (0x20 /*bmiss*/ | 0x10 /*flush_on_commit*/)) {

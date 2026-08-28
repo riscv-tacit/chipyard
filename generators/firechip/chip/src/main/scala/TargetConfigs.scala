@@ -463,6 +463,25 @@ class FireSimMegaBoomV3TacitRawByteConfig extends Config(
   new WithFireSimConfigTweaks++
   new chipyard.TacitMegaBoomV3RawByteConfig)
 
+// Same as FireSimMegaBoomV3TacitRawByteConfig but with the credit-based SRAM
+// packet-buffer queue (tacit.MPQueueImpl.SRAM) — distinct name to keep its
+// bitstreams distinguishable from legacy-queue experiments.
+class FireSimMegaBoomV3TacitSRAMQueueRawByteConfig extends Config(
+  new WithTacitBridge ++
+  new WithDefaultFireSimBridges ++
+  new WithFireSimConfigTweaks++
+  new chipyard.TacitMegaBoomV3SRAMQueueRawByteConfig)
+
+// SRAM-queue Tacit and the TraceDoctor oracle capturing the same run side by side,
+// for cross-checking decoded Tacit traces against ground truth.
+class FireSimMegaBoomV3TacitSRAMQueueTraceDoctorConfig extends Config(
+  new WithTraceDoctorBridge ++
+  new WithTacitBridge ++
+  new WithDefaultFireSimBridges ++
+  new WithFireSimConfigTweaks ++
+  new chipyard.WithBoomTraceDoctor(512) ++
+  new chipyard.TacitMegaBoomV3SRAMQueueRawByteConfig)
+
 class FireSimMegaBoomV3PrefetchRoCCTacitRawByteConfig extends Config(
   new WithTacitBridge ++
   new WithDefaultFireSimBridges ++

@@ -13,7 +13,6 @@ UJ_OPCODES = ["jalr", "jr", "c.jr", "c.jalr", "ret"]
 # extract PC and opcode
 pattern = r'core\s+0:\s+0x([0-9a-fA-F]+)\s+\((0x[0-9a-fA-F]+)\)\s+([a-zA-Z0-9_.]+)\s*(.*)'
 
-
 log_file = sys.argv[1]
 
 with open(log_file, 'r') as f:
@@ -26,6 +25,9 @@ ij_counts = 0
 uj_counts = 0
 
 for line in lines:
+    # stop at the first _exit line
+    if ">>>>  _exit" in line:
+        break
     match = re.match(pattern, line)
     if match:
         pc = match.group(1)

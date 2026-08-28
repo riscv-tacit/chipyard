@@ -4,7 +4,20 @@
 
 #include <algorithm>
 #include <cinttypes>
+#include <stdexcept>
+#include <string>
 #include <vector>
+
+void requireOracleFormat(oracleToken const &t, char const *who) {
+  if (t.fmt() != oracleToken::FORMAT_TAG) {
+    char msg[160];
+    snprintf(msg, sizeof(msg),
+             "%s: token format tag 0x%02x != 0x%02x -- capture predates "
+             "prv/asid tokens; rebuild the bitstream",
+             who, t.fmt(), oracleToken::FORMAT_TAG);
+    throw std::runtime_error(msg);
+  }
+}
 
 // ---------------------------------------------------------------- insttrace
 
@@ -16,7 +29,8 @@ tracedoctor_insttrace::tracedoctor_insttrace(
       csv = true;
   }
   if (csv) {
-    fprintf(std::get<freg_descriptor>(fileRegister[0]), "tsc,pc,flags\n");
+    fprintf(std::get<freg_descriptor>(fileRegister[0]),
+            "tsc,pc,flags,prv,asid\n");
   }
 }
 
@@ -29,6 +43,7 @@ void tracedoctor_insttrace::tick(char const *data, unsigned int tokens) {
   FILE *f = std::get<freg_descriptor>(fileRegister[0]);
   for (unsigned i = 0; i < tokens; i++) {
     oracleToken const &t = toks[i];
+    requireOracleFormat(t, "InstTrace");
     if (!t.committing())
       continue;
     for (unsigned s = 0; s < 4; s++) {
@@ -36,11 +51,12 @@ void tracedoctor_insttrace::tick(char const *data, unsigned int tokens) {
         continue;
       records++;
       if (csv) {
-        fprintf(f, "%" PRIu64 ",0x%" PRIx64 ",0x%x\n", t.tsc(), t.pc[s],
-                t.slotFlags(s));
+        fprintf(f, "%" PRIu64 ",0x%" PRIx64 ",0x%x,%u,%u\n", t.tsc(), t.pc[s],
+                t.slotFlags(s), t.prv(), t.asid());
       } else {
-        uint64_t rec[3] = {t.tsc(), t.pc[s], t.slotFlags(s)};
-        fwrite(rec, sizeof(uint64_t), 3, f);
+        uint64_t rec[4] = {t.tsc(), t.pc[s], t.slotFlags(s),
+                           ((uint64_t)t.prv() << 16) | t.asid()};
+        fwrite(rec, sizeof(uint64_t), 4, f);
       }
     }
   }
@@ -56,24 +72,26 @@ tracedoctor_bboracle::tracedoctor_bboracle(std::vector<std::string> const &args,
       boundaryWhole = true;
   }
   fprintf(std::get<freg_descriptor>(fileRegister[0]),
-          "entry_tsc,bb_pc,retired,computing_x12,stalled_x12,flushed_x12,"
-          "drained_x12\n");
+          "entry_tsc,exit_tsc,bb_pc,prv,asid,retired,computing_x12,"
+          "stalled_x12,flushed_x12,drained_x12\n");
 }
 
 void tracedoctor_bboracle::emitInstance(bbInstance const &inst) {
   if (!inst.valid)
     return;
   fprintf(std::get<freg_descriptor>(fileRegister[0]),
-          "%" PRIu64 ",0x%" PRIx64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64
-          ",%" PRIu64 ",%" PRIu64 "\n",
-          inst.entryTsc, inst.pc, inst.retired, inst.computingX12,
-          inst.stalledX12, inst.flushedX12, inst.drainedX12);
+          "%" PRIu64 ",%" PRIu64 ",0x%" PRIx64 ",%u,%u,%" PRIu64 ",%" PRIu64
+          ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 "\n",
+          inst.entryTsc, inst.exitTsc, inst.pc, inst.prv, inst.asid,
+          inst.retired, inst.computingX12, inst.stalledX12, inst.flushedX12,
+          inst.drainedX12);
   instances++;
 }
 
-void tracedoctor_bboracle::closeInstance(uint64_t entryTsc, uint64_t pc) {
+void tracedoctor_bboracle::closeInstance(uint64_t entryTsc, uint64_t pc,
+                                         unsigned prv, unsigned asid) {
   emitInstance(open);
-  open = bbInstance{true, entryTsc, pc, 0, 0, 0, 0, 0};
+  open = bbInstance{true, entryTsc, entryTsc, pc, prv, asid, 0, 0, 0, 0, 0};
 }
 
 void tracedoctor_bboracle::chargeFlushed(uint64_t cyclesX12) {
@@ -120,8 +138,13 @@ void tracedoctor_bboracle::processToken(oracleToken const &t) {
     for (unsigned s = 0; s < 4; s++) {
       if (!t.archValid(s))
         continue;
+      if (flushPending) { // resolve: redirecting flush vs sequential resume
+        if (t.pc[s] != flushPc + 4 && t.pc[s] != flushPc + 2)
+          bbBoundary = true;
+        flushPending = false;
+      }
       if (bbBoundary) { // this commit opens a new instance
-        closeInstance(t.tsc(), t.pc[s]);
+        closeInstance(t.tsc(), t.pc[s], t.prv(), t.asid());
         bbBoundary = false;
       }
       if (first) { // forward-pending resolves to the newest open instance
@@ -136,6 +159,7 @@ void tracedoctor_bboracle::processToken(oracleToken const &t) {
         first = false;
       }
       open.retired++;
+      open.exitTsc = t.tsc(); // last commit so far; final value = CFI commit
       if (!boundaryWhole) {
         open.computingX12 += 12 / n;
         totalX12 += 12 / n;
@@ -147,8 +171,16 @@ void tracedoctor_bboracle::processToken(oracleToken const &t) {
       } else if (f & F_CFI) {
         lastCommitFlushes = false;
       }
-      if (f & F_CFI) // CFI terminates the instance
+      // a CFI terminates the instance; a flushing commit only if it
+      // redirects (sret/ecall) -- decided at the next commit, so that
+      // fence.i/CSR-write flushes (sequential resume) do not split the BB
+      if (f & F_CFI) {
         bbBoundary = true;
+        flushPending = false;
+      } else if (f & 0x10 /*flush_on_commit*/) {
+        flushPending = true;
+        flushPc = t.pc[s];
+      }
     }
   } else if (t.robEmpty() && drainActive) {
     chargeFlushed(12);
@@ -158,14 +190,23 @@ void tracedoctor_bboracle::processToken(oracleToken const &t) {
     pendingStalledX12 += 12;
   }
 
+  // non-committing squash (page fault etc.): always redirects to the
+  // handler, whose first commit must open its own instance
+  if (t.exception()) {
+    bbBoundary = true;
+    flushPending = false;
+  }
+
   prev = t;
   havePrev = true;
 }
 
 void tracedoctor_bboracle::tick(char const *data, unsigned int tokens) {
   auto *toks = reinterpret_cast<oracleToken const *>(data);
-  for (unsigned i = 0; i < tokens; i++)
+  for (unsigned i = 0; i < tokens; i++) {
+    requireOracleFormat(toks[i], "BBOracle");
     processToken(toks[i]);
+  }
 }
 
 tracedoctor_bboracle::~tracedoctor_bboracle() {
@@ -191,10 +232,20 @@ tracedoctor_bbtrace::~tracedoctor_bbtrace() {
 void tracedoctor_bbtrace::nextCommit(uint64_t tsc, uint64_t pc,
                                      unsigned flags) {
   constexpr unsigned F_BR = 0x02, F_JAL = 0x04, F_JALR = 0x08;
+  constexpr unsigned F_FLUSH = 0x10;
+  // a provisional trap pend from a flush_on_commit (pendingFlags != 0)
+  // resuming sequentially is a fence.i/CSR-write flush, not a control arc
+  if (havePending && pendingTrap && pendingFlags &&
+      (pc == pendingPc + 4 || pc == pendingPc + 2)) {
+    havePending = false;
+    pendingTrap = false;
+  }
   if (havePending) {
     FILE *f = std::get<freg_descriptor>(fileRegister[0]);
     char const *kind;
-    if (pendingFlags & F_JALR) {
+    if (pendingTrap) {
+      kind = "Trap";
+    } else if (pendingFlags & F_JALR) {
       kind = "UninferableJump";
     } else if (pendingFlags & F_JAL) {
       kind = "InferrableJump";
@@ -207,24 +258,36 @@ void tracedoctor_bbtrace::nextCommit(uint64_t tsc, uint64_t pc,
             pendingTsc, kind, pendingPc, pc);
     events++;
     havePending = false;
+    pendingTrap = false;
   }
-  if (flags & (F_BR | F_JAL | F_JALR)) {
+  if (flags & (F_BR | F_JAL | F_JALR | F_FLUSH)) {
     havePending = true;
+    pendingTrap = !(flags & (F_BR | F_JAL | F_JALR));
     pendingPc = pc;
     pendingTsc = tsc;
     pendingFlags = flags;
   }
+  haveLastCommit = true;
+  lastCommitPc = pc;
 }
 
 void tracedoctor_bbtrace::tick(char const *data, unsigned int tokens) {
   auto *toks = reinterpret_cast<oracleToken const *>(data);
   for (unsigned i = 0; i < tokens; i++) {
     oracleToken const &t = toks[i];
-    if (!t.committing())
-      continue;
-    for (unsigned s = 0; s < 4; s++) {
-      if (t.archValid(s))
-        nextCommit(t.tsc(), t.pc[s], t.slotFlags(s));
+    requireOracleFormat(t, "BBTrace");
+    if (t.committing()) {
+      for (unsigned s = 0; s < 4; s++) {
+        if (t.archValid(s))
+          nextCommit(t.tsc(), t.pc[s], t.slotFlags(s));
+      }
+    }
+    if (t.exception() && !havePending && haveLastCommit) {
+      havePending = true;
+      pendingTrap = true;
+      pendingPc = lastCommitPc; // approx: the faulting pc never commits
+      pendingTsc = t.tsc();
+      pendingFlags = 0;
     }
   }
 }
@@ -235,13 +298,13 @@ tracedoctor_oracle::tracedoctor_oracle(std::vector<std::string> const &args,
                                        struct traceInfo const &info)
     : tracedoctor_worker("Oracle", args, info, 1) {}
 
-void tracedoctor_oracle::creditForward(uint64_t pc) {
+void tracedoctor_oracle::creditForward(pcKey const &k) {
   if (pendingStalledX12) {
-    stats[pc].stalledX12 += pendingStalledX12;
+    stats[k].stalledX12 += pendingStalledX12;
     pendingStalledX12 = 0;
   }
   if (pendingDrainedX12) {
-    stats[pc].drainedX12 += pendingDrainedX12;
+    stats[k].drainedX12 += pendingDrainedX12;
     pendingDrainedX12 = 0;
   }
 }
@@ -251,8 +314,8 @@ void tracedoctor_oracle::accountGap(uint64_t cyclesX12) {
   if (cyclesX12 == 0)
     return;
   if (prev.robEmpty()) {
-    if (drainTargetPc) { // Flushed: backward to the flush causer
-      stats[drainTargetPc].flushedX12 += cyclesX12;
+    if (drainTarget.first) { // Flushed: backward to the flush causer
+      stats[drainTarget].flushedX12 += cyclesX12;
       cyclesFlushedX12 += cyclesX12;
     } else { // Drained: forward to the refill instruction
       pendingDrainedX12 += cyclesX12;
@@ -282,10 +345,10 @@ void tracedoctor_oracle::processToken(oracleToken const &t) {
   // Drain lifecycle: classify at onset using the youngest previous commit.
   if (t.robEmpty() && !inDrain) {
     inDrain = true;
-    drainTargetPc = lastCommitFlushes ? lastCommitPc : 0;
+    drainTarget = lastCommitFlushes ? lastCommit : pcKey{0, 0};
   } else if (!t.robEmpty()) {
     inDrain = false;
-    drainTargetPc = 0;
+    drainTarget = {0, 0};
   }
 
   // The token's own cycle.
@@ -293,12 +356,13 @@ void tracedoctor_oracle::processToken(oracleToken const &t) {
     unsigned n = 0;
     for (unsigned s = 0; s < 4; s++)
       n += t.archValid(s);
-    uint64_t firstPc = 0;   // oldest commit this cycle (slot 0 is oldest)
-    uint64_t flusherPc = 0; // youngest committing bmiss/flush_on_commit slot
+    pcKey firstKey = {0, 0};   // oldest commit this cycle (slot 0 is oldest)
+    pcKey flusherKey = {0, 0}; // youngest committing bmiss/flush slot
     for (unsigned s = 0; s < 4; s++) {
       if (!t.archValid(s))
         continue;
-      auto &st = stats[t.pc[s]];
+      pcKey const k = {t.pc[s], t.asid()};
+      auto &st = stats[k];
       st.retired++;
       st.computingX12 += 12 / n; // Computing: 1/n each (n <= 4 divides 12)
       totalCommits++;
@@ -307,19 +371,19 @@ void tracedoctor_oracle::processToken(oracleToken const &t) {
         if (!t.isBr(s) && !t.isJalr(s))
           badBmissType++;
       }
-      if (!firstPc)
-        firstPc = t.pc[s];
+      if (!firstKey.first)
+        firstKey = k;
       if (t.bmiss(s) || t.flushOnCommit(s))
-        flusherPc = t.pc[s];
+        flusherKey = k;
     }
     cyclesComputingX12 += 12;
     // Stalled/Drained cycles pending forward resolve to the oldest commit.
-    creditForward(firstPc);
-    lastCommitFlushes = flusherPc != 0;
-    lastCommitPc = flusherPc;
+    creditForward(firstKey);
+    lastCommitFlushes = flusherKey.first != 0;
+    lastCommit = flusherKey;
   } else if (t.robEmpty()) {
-    if (drainTargetPc) {
-      stats[drainTargetPc].flushedX12 += 12;
+    if (drainTarget.first) {
+      stats[drainTarget].flushedX12 += 12;
       cyclesFlushedX12 += 12;
     } else {
       pendingDrainedX12 += 12;
@@ -336,26 +400,29 @@ void tracedoctor_oracle::processToken(oracleToken const &t) {
 
 void tracedoctor_oracle::tick(char const *data, unsigned int tokens) {
   auto *toks = reinterpret_cast<oracleToken const *>(data);
-  for (unsigned i = 0; i < tokens; i++)
+  for (unsigned i = 0; i < tokens; i++) {
+    requireOracleFormat(toks[i], "Oracle");
     processToken(toks[i]);
+  }
 }
 
 tracedoctor_oracle::~tracedoctor_oracle() {
   FILE *f = std::get<freg_descriptor>(fileRegister[0]);
-  fprintf(f, "pc,retired,computing_x12,stalled_x12,flushed_x12,drained_x12\n");
+  fprintf(f, "pc,asid,retired,computing_x12,stalled_x12,flushed_x12,"
+             "drained_x12\n");
   auto total = [](pcStats const &s) {
     return s.computingX12 + s.stalledX12 + s.flushedX12 + s.drainedX12;
   };
-  std::vector<std::pair<uint64_t, pcStats>> sorted(stats.begin(), stats.end());
+  std::vector<std::pair<pcKey, pcStats>> sorted(stats.begin(), stats.end());
   std::sort(sorted.begin(), sorted.end(), [&](auto &a, auto &b) {
     return total(a.second) > total(b.second);
   });
-  for (auto &[pc, st] : sorted) {
+  for (auto &[k, st] : sorted) {
     fprintf(f,
-            "0x%" PRIx64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64
+            "0x%" PRIx64 ",%u,%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64
             ",%" PRIu64 "\n",
-            pc, st.retired, st.computingX12, st.stalledX12, st.flushedX12,
-            st.drainedX12);
+            k.first, k.second, st.retired, st.computingX12, st.stalledX12,
+            st.flushedX12, st.drainedX12);
   }
 
   uint64_t attributedX12 = cyclesComputingX12 + cyclesStalledX12 +

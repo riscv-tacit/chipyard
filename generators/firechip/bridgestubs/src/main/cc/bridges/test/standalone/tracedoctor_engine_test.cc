@@ -331,9 +331,12 @@ void test_round_robin_pool() {
 #include "tracedoctor_oracle.h"
 
 oracleToken mk_token(uint64_t tsc, unsigned state,
-                     std::vector<std::pair<uint64_t, unsigned>> slots = {}) {
+                     std::vector<std::pair<uint64_t, unsigned>> slots = {},
+                     unsigned prv = 3, unsigned asid = 0) {
   oracleToken t = {};
   t.word0 = (tsc & ((1ULL << 48) - 1)) | ((uint64_t)state << 48);
+  t.ctx = ((uint64_t)oracleToken::FORMAT_TAG << 56) |
+          ((uint64_t)(prv & 0x3) << 16) | (asid & 0xffff);
   unsigned s = 0;
   for (auto &[pc, flags] : slots) {
     t.flags |= (uint64_t)(flags | 1) << (16 * s); // |1 = arch_valid
@@ -359,9 +362,10 @@ std::map<uint64_t, oracleRow> read_oracle_csv(const std::string &path) {
   std::getline(f, line); // header
   while (std::getline(f, line)) {
     uint64_t pc;
+    unsigned asid;
     oracleRow r;
-    if (sscanf(line.c_str(), "%lx,%lu,%lu,%lu,%lu,%lu", &pc, &r.retired,
-               &r.comp, &r.stall, &r.flush, &r.drain) == 6)
+    if (sscanf(line.c_str(), "%lx,%u,%lu,%lu,%lu,%lu,%lu", &pc, &asid,
+               &r.retired, &r.comp, &r.stall, &r.flush, &r.drain) == 7)
       m[pc] = r;
   }
   return m;
@@ -416,6 +420,184 @@ void test_oracle_ground_truth() {
     printf("PASS: %s\n", __func__);
 }
 
+struct bbRow {
+  uint64_t pc = 0, retired = 0, comp = 0, stall = 0, flush = 0, drain = 0;
+  uint64_t exit = 0;
+  unsigned prv = 0, asid = 0;
+};
+
+std::vector<bbRow> read_bb_csv(const std::string &path) {
+  std::vector<bbRow> v;
+  std::ifstream f(path);
+  std::string line;
+  std::getline(f, line); // header
+  while (std::getline(f, line)) {
+    bbRow r;
+    uint64_t tsc, xtsc;
+    if (sscanf(line.c_str(), "%lu,%lu,0x%lx,%u,%u,%lu,%lu,%lu,%lu,%lu", &tsc,
+               &xtsc, &r.pc, &r.prv, &r.asid, &r.retired, &r.comp, &r.stall,
+               &r.flush, &r.drain) == 10) {
+      r.exit = xtsc;
+      v.push_back(r);
+    }
+  }
+  return v;
+}
+
+// Trap edges must terminate BB instances: a flush_on_commit commit
+// (sret/ecall) ends its own BB, and a non-committing exception means the
+// next commit opens the handler's instance. Regression for the 602.gcc_s
+// finding where post-trap entry commits were absorbed into the pre-trap
+// instance (kernel<->user entry instructions credited to the wrong BB).
+void test_bboracle_trap_boundaries() {
+  constexpr unsigned COMMIT = 0x01, EMPTY = 0x04, EXC = 0x10;
+  constexpr unsigned BR = 0x02, JAL = 0x04, FLUSH = 0x10;
+  const auto info = make_info();
+
+  { // sret-like: flush_on_commit commit closes its instance
+    std::vector<oracleToken> toks = {
+        mk_token(10, COMMIT, {{0x100, 0}, {0x104, BR}}),
+        mk_token(11, COMMIT, {{0x200, FLUSH}}),
+        mk_token(12, EMPTY), // squash refill: Flushed, charged to 0x200
+        mk_token(20, COMMIT, {{0x300, 0}, {0x304, JAL}}, /*prv=*/0,
+                 /*asid=*/42), // user-mode resume: tags must stick
+        mk_token(21, COMMIT, {{0x400, 0}}, 0, 42),
+    };
+    const auto out = tmpfile_name("bb_trap_sret.csv");
+    {
+      tracedoctor_bboracle w({"file:" + out}, info);
+      w.tick(reinterpret_cast<char *>(toks.data()), toks.size());
+    }
+    auto v = read_bb_csv(out);
+    CHECK(v.size() == 4, "sret: expected 4 instances");
+    if (v.size() == 4) {
+      CHECK(v[0].pc == 0x100 && v[0].retired == 2, "sret: pre-trap inst");
+      CHECK(v[0].exit == 10, "sret: exit tsc = last commit cycle");
+      CHECK(v[1].pc == 0x200 && v[1].retired == 1, "sret: flusher inst");
+      CHECK(v[1].exit == 11, "sret: flusher exit tsc");
+      CHECK(v[1].flush == 96, "sret: refill flushed to flusher");
+      CHECK(v[2].pc == 0x300 && v[2].retired == 2, "sret: post-trap entry");
+      CHECK(v[2].prv == 0 && v[2].asid == 42, "sret: user tags on entry inst");
+      CHECK(v[1].prv == 3, "sret: kernel tag on flusher inst");
+      CHECK(v[3].pc == 0x400 && v[3].retired == 1, "sret: tail inst");
+    }
+    remove(out.c_str());
+  }
+
+  { // fence.i/CSR-write-like: flushing commit with SEQUENTIAL resume must
+    // NOT split the instance (it is a timing event, not a control arc)
+    std::vector<oracleToken> toks = {
+        mk_token(10, COMMIT, {{0x100, 0}, {0x104, BR}}),
+        mk_token(11, COMMIT, {{0x200, FLUSH}}), // fence.i at 0x200
+        mk_token(12, EMPTY),                    // refetch
+        mk_token(20, COMMIT, {{0x204, 0}}),     // sequential resume
+        mk_token(21, COMMIT, {{0x208, JAL}}),
+        mk_token(22, COMMIT, {{0x900, 0}}),
+    };
+    const auto out = tmpfile_name("bb_trap_fencei.csv");
+    {
+      tracedoctor_bboracle w({"file:" + out}, info);
+      w.tick(reinterpret_cast<char *>(toks.data()), toks.size());
+    }
+    auto v = read_bb_csv(out);
+    CHECK(v.size() == 3, "fencei: expected 3 instances");
+    if (v.size() == 3) {
+      CHECK(v[0].pc == 0x100 && v[0].retired == 2, "fencei: pre inst");
+      CHECK(v[1].pc == 0x200 && v[1].retired == 3,
+            "fencei: one instance across the sequential flush");
+      CHECK(v[2].pc == 0x900 && v[2].retired == 1, "fencei: tail inst");
+    }
+    remove(out.c_str());
+  }
+
+  { // exception: non-committing squash; handler commit opens fresh
+    std::vector<oracleToken> toks = {
+        mk_token(10, COMMIT, {{0x100, 0}}),
+        mk_token(11, EXC),
+        mk_token(12, EMPTY), // refill reads Drained (no flushing commit)
+        mk_token(20, COMMIT, {{0x500, 0}, {0x504, BR}}),
+        mk_token(21, COMMIT, {{0x600, 0}}),
+    };
+    const auto out = tmpfile_name("bb_trap_exc.csv");
+    {
+      tracedoctor_bboracle w({"file:" + out}, info);
+      w.tick(reinterpret_cast<char *>(toks.data()), toks.size());
+    }
+    auto v = read_bb_csv(out);
+    CHECK(v.size() == 3, "exc: expected 3 instances");
+    if (v.size() == 3) {
+      CHECK(v[0].pc == 0x100 && v[0].retired == 1, "exc: pre-trap inst");
+      CHECK(v[1].pc == 0x500 && v[1].retired == 2, "exc: handler entry inst");
+      CHECK(v[1].drain == 96, "exc: refill drained to handler");
+      CHECK(v[1].stall == 12, "exc: exception cycle forward to handler");
+      CHECK(v[2].pc == 0x600 && v[2].retired == 1, "exc: tail inst");
+    }
+    remove(out.c_str());
+  }
+  if (!g_failures)
+    printf("PASS: %s\n", __func__);
+}
+
+// Workers must hard-reject tokens without the current format tag (captures
+// from bitstreams predating prv/asid) instead of silently mis-decoding.
+void test_reject_old_format() {
+  auto t = mk_token(10, 0x01, {{0x100, 0}});
+  t.ctx = 0; // old bitstream: reserved word was zero
+  const auto info = make_info();
+  const auto out = tmpfile_name("reject_old.csv");
+  bool threw = false;
+  try {
+    tracedoctor_bboracle w({"file:" + out}, info);
+    w.tick(reinterpret_cast<char *>(&t), 1);
+  } catch (std::exception const &) {
+    threw = true;
+  }
+  CHECK(threw, "old-format token must throw");
+  remove(out.c_str());
+  if (!g_failures)
+    printf("PASS: %s\n", __func__);
+}
+
+// bbtrace must emit Trap arcs at trap edges like the tacit decoder does:
+// (sret pc -> next commit) exactly; for a non-committing exception the
+// from-pc is approximated by the last committed pc.
+void test_bbtrace_trap_arcs() {
+  constexpr unsigned COMMIT = 0x01, EMPTY = 0x04, EXC = 0x10;
+  constexpr unsigned BR = 0x02, FLUSH = 0x10;
+  std::vector<oracleToken> toks = {
+      mk_token(10, COMMIT, {{0x100, 0}, {0x104, BR}}),
+      mk_token(11, COMMIT, {{0x200, FLUSH}}),
+      mk_token(12, EMPTY),
+      mk_token(20, COMMIT, {{0x300, 0}}),
+      mk_token(21, EXC),
+      mk_token(30, COMMIT, {{0x700, FLUSH}}), // fence.i-like: sequential
+      mk_token(31, COMMIT, {{0x704, 0}}),     // resume, must emit NO arc
+  };
+  const auto out = tmpfile_name("bbtrace_trap.txt");
+  const auto info = make_info();
+  {
+    tracedoctor_bbtrace w({"file:" + out}, info);
+    w.tick(reinterpret_cast<char *>(toks.data()), toks.size());
+  }
+  std::ifstream f(out);
+  std::vector<std::string> lines;
+  std::string line;
+  while (std::getline(f, line))
+    lines.push_back(line);
+  CHECK(lines.size() == 3, "bbtrace: expected 3 arcs");
+  if (lines.size() == 3) {
+    CHECK(lines[0] == "[timestamp: 10] TakenBranch: 0x104 -> 0x200",
+          "bbtrace: br arc");
+    CHECK(lines[1] == "[timestamp: 11] Trap: 0x200 -> 0x300",
+          "bbtrace: sret trap arc");
+    CHECK(lines[2] == "[timestamp: 21] Trap: 0x300 -> 0x700",
+          "bbtrace: exception trap arc");
+  }
+  remove(out.c_str());
+  if (!g_failures)
+    printf("PASS: %s\n", __func__);
+}
+
 // Replay the real metasim capture if present: totals must reconcile.
 void test_oracle_replay_real() {
   const char *cap = getenv("ORACLE_TOKENS");
@@ -454,6 +636,9 @@ int main() {
   test_compression_zst();
   test_round_robin_pool();
   test_oracle_ground_truth();
+  test_bboracle_trap_boundaries();
+  test_bbtrace_trap_arcs();
+  test_reject_old_format();
   test_oracle_replay_real();
 
   if (g_failures) {

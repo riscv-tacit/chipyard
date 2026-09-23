@@ -1,0 +1,42 @@
+# nt_f1 / nt_f0 in the instrumented RTL sim (TacitMegaBoomV3BackpressurePrintfConfig, DMA sink, 2048 iters)
+RESULT bench=nt_f1 mode=untraced rep=0 iters=2048 cycles=126441 instret=266245 stall=0 bytes=0 srcstall=0 start_cycle=34429 gap=0 dropped=0
+RESULT bench=nt_f1 mode=traced rep=0 iters=2048 cycles=133456 instret=266245 stall=66301 bytes=133152 srcstall=395 start_cycle=174869 gap=0 dropped=0
+RESULT bench=nt_f0 mode=untraced rep=0 iters=2048 cycles=42036 instret=135173 stall=0 bytes=0 srcstall=0 start_cycle=378873 gap=0 dropped=0
+RESULT bench=nt_f0 mode=traced rep=0 iters=2048 cycles=133414 instret=135173 stall=99558 bytes=133160 srcstall=370 start_cycle=434391 gap=0 dropped=0
+# windows: nt_f1 untraced 60000-70000, nt_f1 traced 200000-210000, nt_f0 traced 460000-470000
+=== window 60000..70000 (10001 cycles): FE lines 10001, CM lines 9934
+  fetch: s0v=1.00 s1v=1.00 s2v=0.53 f3v=0.53 f4v=0.56 per cycle
+  redirects: F1=309 F2=162 F3=162 (per cycle F1=0.031 F2=0.016 F3=0.016); f2_ghist_fix=7014
+  backpressure: fb_full=0.000 ftq_full=0.000
+  commit: insns=21064 (2.11 IPC) groups={2: 9336, 4: 598} trace_stall_cycles=0 rob_empty_cycles=0
+  s0 pc trace (low12; *=F1 redirect ^=F2 redirect !=F3): 5b0 5c0 5c0 5d0 5e0 5e0 5f0 5f0 600 600 610 610* 410* 420^ 420! 430 430 440 440 450 450 460 460 470 470 480 490 490 4a0 4a0 4b0
+=== window 200000..210000 (10001 cycles): FE lines 10000, CM lines 10001
+  fetch: s0v=1.00 s1v=1.00 s2v=0.52 f3v=0.55 f4v=0.64 per cycle
+  redirects: F1=304 F2=154 F3=212 (per cycle F1=0.030 F2=0.015 F3=0.021); f2_ghist_fix=6715
+  backpressure: fb_full=0.000 ftq_full=0.110
+  commit: insns=19984 (2.00 IPC) groups={2: 4, 4: 4994} trace_stall_cycles=5003 rob_empty_cycles=0
+  s0 pc trace (low12; *=F1 redirect ^=F2 redirect !=F3): 570 570 580 580 590 590 5a0 5a0 5b0 5b0 5c0 5c0 5d0 5d0 5e0 5e0 5f0 5f0 600 600 610 410* 420^ 420! 430 430 440 440 450 450 460
+=== window 460000..470000 (10001 cycles): FE lines 10001, CM lines 10001
+  fetch: s0v=1.00 s1v=1.00 s2v=0.60 f3v=0.92 f4v=0.95 per cycle
+  redirects: F1=385 F2=539 F3=154 (per cycle F1=0.038 F2=0.054 F3=0.015); f2_ghist_fix=5571
+  backpressure: fb_full=0.000 ftq_full=0.693
+  commit: insns=10132 (1.01 IPC) groups={4: 2533} trace_stall_cycles=7468 rob_empty_cycles=0
+  s0 pc trace (low12; *=F1 redirect ^=F2 redirect !=F3): 3f0 400 410 400^ 410 400^ 410 400^ 410 400^ 410 400^ 410 300^ 310! 210* 320 330 320 330 320 330 320 330 340 350 360 350 360 350 360
+=== DS window 60000..70000 (10001 cycles): decode-active cycles 7610 (0.76)
+  mean dec_valid=2.77 dec_fire=2.77 dis_valid=1.56 dis_fire=1.56  (dispatch/cycle over window 1.19)
+  cycles with !dis_ready=0.000 !rob_ready=0.000 ren_stall=0.000 iq_full=0.000 brmask_full=0.000 mispred_flush=0.000
+  rob occupancy: mean=23.2 min=12 max=28 hist(by16)={0: 377, 16: 7233}
+=== DS window 200000..210000 (10001 cycles): decode-active cycles 9994 (1.00)
+  mean dec_valid=3.99 dec_fire=2.00 dis_valid=4.00 dis_fire=2.00  (dispatch/cycle over window 2.00)
+  cycles with !dis_ready=0.500 !rob_ready=0.500 ren_stall=0.000 iq_full=0.000 brmask_full=0.000 mispred_flush=0.000
+  rob occupancy: mean=62.0 min=0 max=124 hist(by16)={0: 4996, 112: 4998}
+=== DS window 460000..470000 (10001 cycles): decode-active cycles 10001 (1.00)
+  mean dec_valid=4.00 dec_fire=1.01 dis_valid=4.00 dis_fire=1.01  (dispatch/cycle over window 1.01)
+  cycles with !dis_ready=0.747 !rob_ready=0.747 ren_stall=0.000 iq_full=0.000 brmask_full=0.000 mispred_flush=0.000
+  rob occupancy: mean=31.4 min=0 max=124 hist(by16)={0: 7467, 112: 2534}
+cycles 65000..65047: per-cycle commits (S = trace stall asserted, F = fetch buffer full)
+  2 2 2 2 2 2 4 2 2 4 4 2 2 2 2 2 0 2 2 2 2 2 2 2 4 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 4 2 2 2 2
+cycles 205000..205047: per-cycle commits (S = trace stall asserted, F = fetch buffer full)
+  4 4 4 0S 0S 0S 0S 0S 4 4 4 4 4 0S 0S 0S 0S 0S 4 4 4 4 4 0S 0S 0S 0S 0S 4 4 4 4 4 0S 0S 0S 0S 0S 4 4 4 4 4 0S 0S 0S 0S 0S
+cycles 465000..465047: per-cycle commits (S = trace stall asserted, F = fetch buffer full)
+  0S 0S 0S 0S 0S 0S 0S 0S 0S 4 4 4 0S 0S 0S 0S 0S 0S 0S 0S 0S 4 4 4 0S 0S 0S 0S 0S 0S 0S 0S 0S 4 4 4 0S 0S 0S 0S 0S 0S 0S 0S 0S 4 4 4

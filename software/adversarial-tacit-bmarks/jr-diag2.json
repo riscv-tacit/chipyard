@@ -1,0 +1,18 @@
+{
+  "name": "jr-diag2",
+  "base": "bare-base.json",
+  "workdir": "src",
+  "host-init": "build.sh",
+  "spike-args": "--extlib libspikedevices.so --device=trace_encoder_ctrl --trace l",
+  "jobs": [
+    {
+      "name": "jr-diag2",
+      "bin": "build/jr-diag2.elf",
+      "firesim": {
+        "simulation_outputs": [
+          "TRACEFILE-C0"
+        ]
+      }
+    }
+  ]
+}

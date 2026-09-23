@@ -1,0 +1,76 @@
+# tjr rings in the instrumented RTL sim (TacitMegaBoomV3BackpressurePrintfConfig, DMA sink, 4096 rounds = 64K jumps)
+RESULT bench=tjr_near mode=untraced rep=0 iters=4096 cycles=77860 instret=208852 stall=0 bytes=0 srcstall=0 start_cycle=28167 gap=0 dropped=0
+RESULT bench=tjr_near mode=traced rep=0 iters=4096 cycles=137750 instret=208852 stall=65527 bytes=221168 srcstall=2706 start_cycle=120359 gap=0 dropped=0
+RESULT bench=tjr_d13 mode=untraced rep=0 iters=4096 cycles=143392 instret=208852 stall=0 bytes=0 srcstall=0 start_cycle=341047 gap=0 dropped=0
+RESULT bench=tjr_d13 mode=traced rep=0 iters=4096 cycles=143392 instret=208852 stall=222 bytes=266216 srcstall=3326 start_cycle=498336 gap=0 dropped=0
+RESULT bench=tjr_d24 mode=untraced rep=0 iters=4096 cycles=143392 instret=208852 stall=0 bytes=0 srcstall=0 start_cycle=724385 gap=0 dropped=0
+RESULT bench=tjr_d24 mode=traced rep=0 iters=4096 cycles=206064 instret=208852 stall=132406 bytes=397256 srcstall=5003 start_cycle=881463 gap=0 dropped=0
+# windows: near u/t 60000/200000, d13 u/t 400000/550000, d24 u/t 800000/1000000
+=== window 60000..70000 (10001 cycles): FE lines 10001, CM lines 10001
+  fetch: s0v=1.00 s1v=1.00 s2v=1.00 f3v=1.00 f4v=1.00 per cycle
+  redirects: F1=8421 F2=8422 F3=8422 (per cycle F1=0.842 F2=0.842 F3=0.842); f2_ghist_fix=0
+  backpressure: fb_full=0.000 ftq_full=0.000
+  commit: insns=26845 (2.68 IPC) groups={1: 2632, 2: 1580, 3: 2103, 4: 3686} trace_stall_cycles=0 rob_empty_cycles=0
+  s0 pc trace (low12; *=F1 redirect ^=F2 redirect !=F3): 400^! 394*! 408*^ 3a0*^! 414*^! 340*^! 350^! 3c0*! 358*^ 3cc*^! 364*^! 3d8*^! 370*^! 3e4*^! 37c*^! 380^! 3f0*! 388*^ 3fc*^! 400^! 394*! 408*^ 3a0*^! 414*^! 340*^! 350^! 3c0*! 358*^ 3cc*^! 364*^! 3d8*^!
+=== window 200000..210000 (10001 cycles): FE lines 10000, CM lines 10001
+  fetch: s0v=1.00 s1v=1.00 s2v=0.78 f3v=0.93 f4v=0.94 per cycle
+  redirects: F1=8424 F2=6537 F3=7687 (per cycle F1=0.842 F2=0.654 F3=0.769); f2_ghist_fix=0
+  backpressure: fb_full=0.000 ftq_full=0.378
+  commit: insns=15236 (1.52 IPC) groups={1: 1047, 2: 921, 3: 833, 4: 2462} trace_stall_cycles=4738 rob_empty_cycles=0
+  s0 pc trace (low12; *=F1 redirect ^=F2 redirect !=F3): 3d8*! 364*^! 3d8*! 370*^ 3e4*^! 370*^! 3e4*! 37c*^ 380^! 37c*! 380! 3f0* 388*^ 3fc*^! 400^! 3fc*! 400! 394* 408*^ 3a0*^! 414*^! 340*^! 350^! 340*! 350! 3c0* 358*^ 3cc*^! 364*^! 3d8*^! 364*^!
+=== DS window 60000..70000 (10001 cycles): decode-active cycles 10001 (1.00)
+  mean dec_valid=2.68 dec_fire=2.68 dis_valid=2.68 dis_fire=2.68  (dispatch/cycle over window 2.68)
+  cycles with !dis_ready=0.000 !rob_ready=0.000 ren_stall=0.000 iq_full=0.000 brmask_full=0.000 mispred_flush=0.000
+  rob occupancy: mean=40.0 min=40 max=40 hist(by16)={32: 10001}
+=== DS window 200000..210000 (10001 cycles): decode-active cycles 9582 (0.96)
+  mean dec_valid=3.07 dec_fire=1.59 dis_valid=2.90 dis_fire=1.48  (dispatch/cycle over window 1.42)
+  cycles with !dis_ready=0.451 !rob_ready=0.454 ren_stall=0.000 iq_full=0.000 brmask_full=0.000 mispred_flush=0.000
+  rob occupancy: mean=82.1 min=0 max=127 hist(by16)={0: 3230, 112: 6352}
+=== window 400000..410000 (10001 cycles): FE lines 10001, CM lines 9572
+  fetch: s0v=1.00 s1v=1.00 s2v=0.54 f3v=0.54 f4v=0.54 per cycle
+  redirects: F1=4572 F2=4571 F3=4572 (per cycle F1=0.457 F2=0.457 F3=0.457); f2_ghist_fix=0
+  backpressure: fb_full=0.000 ftq_full=0.000
+  commit: insns=14574 (1.46 IPC) groups={1: 5141, 2: 4002, 3: 287, 4: 142} trace_stall_cycles=0 rob_empty_cycles=0
+  s0 pc trace (low12; *=F1 redirect ^=F2 redirect !=F3): 450! 4c0* 4c0^ 458*! 458^ 4cc*! 4cc^ 464*! 464^ 4d8*! 4d8^ 470*! 470^ 4e4*! 4e4^ 47c*! 47c^ 480! 4f0* 4f0^ 488*! 488^ 4fc*! 4fc^ 500! 494* 494^ 508*! 508^ 4a0*! 4a0^
+=== window 550000..560000 (10001 cycles): FE lines 10001, CM lines 9572
+  fetch: s0v=1.00 s1v=1.00 s2v=0.54 f3v=0.54 f4v=0.54 per cycle
+  redirects: F1=4572 F2=4573 F3=4572 (per cycle F1=0.457 F2=0.457 F3=0.457); f2_ghist_fix=0
+  backpressure: fb_full=0.000 ftq_full=0.000
+  commit: insns=14572 (1.46 IPC) groups={1: 5143, 2: 4000, 3: 287, 4: 142} trace_stall_cycles=0 rob_empty_cycles=0
+  s0 pc trace (low12; *=F1 redirect ^=F2 redirect !=F3): 494^ 508*! 508^ 4a0*! 4a0^ 514*! 514^ 440*! 440^ 450! 4c0* 4c0^ 458*! 458^ 4cc*! 4cc^ 464*! 464^ 4d8*! 4d8^ 470*! 470^ 4e4*! 4e4^ 47c*! 47c^ 480! 4f0* 4f0^ 488*! 488^
+=== DS window 400000..410000 (10001 cycles): decode-active cycles 7502 (0.75)
+  mean dec_valid=1.94 dec_fire=1.94 dis_valid=1.00 dis_fire=1.00  (dispatch/cycle over window 0.75)
+  cycles with !dis_ready=0.000 !rob_ready=0.000 ren_stall=0.000 iq_full=0.000 brmask_full=0.000 mispred_flush=0.000
+  rob occupancy: mean=24.5 min=20 max=28 hist(by16)={16: 7502}
+=== DS window 550000..560000 (10001 cycles): decode-active cycles 7501 (0.75)
+  mean dec_valid=1.94 dec_fire=1.94 dis_valid=1.00 dis_fire=1.00  (dispatch/cycle over window 0.75)
+  cycles with !dis_ready=0.000 !rob_ready=0.000 ren_stall=0.000 iq_full=0.000 brmask_full=0.000 mispred_flush=0.000
+  rob occupancy: mean=24.5 min=20 max=28 hist(by16)={16: 7501}
+=== window 800000..810000 (10001 cycles): FE lines 10001, CM lines 9572
+  fetch: s0v=1.00 s1v=1.00 s2v=0.54 f3v=0.54 f4v=0.54 per cycle
+  redirects: F1=4572 F2=4572 F3=4572 (per cycle F1=0.457 F2=0.457 F3=0.457); f2_ghist_fix=0
+  backpressure: fb_full=0.000 ftq_full=0.000
+  commit: insns=14574 (1.46 IPC) groups={1: 5141, 2: 4002, 3: 287, 4: 142} trace_stall_cycles=0 rob_empty_cycles=0
+  s0 pc trace (low12; *=F1 redirect ^=F2 redirect !=F3): 6c0^ 658*! 658^ 6cc*! 6cc^ 664*! 664^ 6d8*! 6d8^ 670*! 670^ 6e4*! 6e4^ 67c*! 67c^ 680! 6f0* 6f0^ 688*! 688^ 6fc*! 6fc^ 700! 694* 694^ 708*! 708^ 6a0*! 6a0^ 714*! 714^
+=== window 1000000..1010000 (10001 cycles): FE lines 10001, CM lines 10001
+  fetch: s0v=1.00 s1v=1.00 s2v=0.53 f3v=0.71 f4v=0.78 per cycle
+  redirects: F1=4701 F2=4393 F3=5899 (per cycle F1=0.470 F2=0.439 F3=0.590); f2_ghist_fix=0
+  backpressure: fb_full=0.000 ftq_full=0.421
+  commit: insns=10176 (1.02 IPC) groups={1: 864, 2: 398, 3: 752, 4: 1565} trace_stall_cycles=6422 rob_empty_cycles=0
+  s0 pc trace (low12; *=F1 redirect ^=F2 redirect !=F3): 6fc^ 700! 694* 694^ 708*! 708^ 6a0*! 6a0^ 714*! 714^ 640*! 640^ 650! 6c0* 650^ 6c0* 650^ 6c0* 6c0^ 658*! 658^ 6cc*! 6cc^ 664*! 664^ 6d8*! 664^! 6d8*! 664^! 6d8*! 664^!
+=== DS window 800000..810000 (10001 cycles): decode-active cycles 7503 (0.75)
+  mean dec_valid=1.94 dec_fire=1.94 dis_valid=1.00 dis_fire=1.00  (dispatch/cycle over window 0.75)
+  cycles with !dis_ready=0.000 !rob_ready=0.000 ren_stall=0.000 iq_full=0.000 brmask_full=0.000 mispred_flush=0.000
+  rob occupancy: mean=24.5 min=20 max=28 hist(by16)={16: 7503}
+=== DS window 1000000..1010000 (10001 cycles): decode-active cycles 9528 (0.95)
+  mean dec_valid=3.16 dec_fire=1.07 dis_valid=2.38 dis_fire=0.96  (dispatch/cycle over window 0.91)
+  cycles with !dis_ready=0.624 !rob_ready=0.634 ren_stall=0.000 iq_full=0.000 brmask_full=0.000 mispred_flush=0.000
+  rob occupancy: mean=58.8 min=0 max=127 hist(by16)={0: 5014, 112: 4514}
+cycles 65000..65039: per-cycle commits (S = trace stall asserted, F = fetch buffer full)
+  4 3 1 4 4 3 1 4 2 2 3 1 3 1 4 3 1 4 4 3 1 4 4 3 1 4 4 1 2 1 4 2 2 3 1 4 4 4 2 2
+cycles 205000..205039: per-cycle commits (S = trace stall asserted, F = fetch buffer full)
+  4 4 2 2 4 0S 0S 0S 3 1 4 4 0S 4 0S 0S 0S 0S 0S 2 2 4 3 1 4 0S 0S 0S 0S 4 3 1 3 0S 0S 0S 0S 1 4 3
+cycles 555000..555039: per-cycle commits (S = trace stall asserted, F = fetch buffer full)
+  1 1 2 2 1 2 1 2 1 1 2 2 0 1 2 1 1 2 1 1 1 2 1 2 1 2 1 1 4 0 1 3 2 1 1 2 2 1 2 1
+cycles 1005000..1005039: per-cycle commits (S = trace stall asserted, F = fetch buffer full)
+  0S 0S 0S 0S 0S 0S 0S 4 3 1 4 0S 0S 0S 0S 0S 0S 0S 0S 4 3 1 2 0S 0S 0S 0S 0S 0S 2 4 4 4 4 0S 0S 0S 0S 0S 0S

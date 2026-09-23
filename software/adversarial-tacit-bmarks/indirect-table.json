@@ -1,0 +1,10 @@
+{
+  "name": "indirect-table",
+  "base": "bare-base.json",
+  "workdir": "src",
+  "host-init": "build.sh",
+  "spike-args": "--extlib libspikedevices.so --device=trace_encoder_ctrl --trace l",
+  "jobs": [
+    { "name": "indirect-table", "bin": "build/indirect-table.elf" }
+  ]
+}

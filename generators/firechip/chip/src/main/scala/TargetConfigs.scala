@@ -472,6 +472,52 @@ class FireSimMegaBoomV3TacitSRAMQueueRawByteConfig extends Config(
   new WithFireSimConfigTweaks++
   new chipyard.TacitMegaBoomV3SRAMQueueRawByteConfig)
 
+// Buffer-depth sweep points, each with the TraceDoctor oracle so decoded traces
+// can be cross-checked against ground truth. WithSynthAsserts is a PLATFORM_CONFIG
+// (FRFCFS16GBQuadRank_WithSynthAsserts_BaseF2PCIMConfig), not baked in here.
+// One bitstream each: depth sizes real SRAM, so it cannot be a runtime knob.
+class FireSimMegaBoomV3TacitSRAMQueueDepth32TraceDoctorConfig extends Config(
+  new WithTraceDoctorBridge ++
+  new WithTacitBridge ++
+  new WithDefaultFireSimBridges ++
+  new WithFireSimConfigTweaks ++
+  new chipyard.WithBoomTraceDoctor(512) ++
+  new chipyard.TacitMegaBoomV3SRAMQueueDepth32Config)
+
+class FireSimMegaBoomV3TacitSRAMQueueDepth64TraceDoctorConfig extends Config(
+  new WithTraceDoctorBridge ++
+  new WithTacitBridge ++
+  new WithDefaultFireSimBridges ++
+  new WithFireSimConfigTweaks ++
+  new chipyard.WithBoomTraceDoctor(512) ++
+  new chipyard.TacitMegaBoomV3SRAMQueueDepth64Config)
+
+class FireSimMegaBoomV3TacitSRAMQueueDepth128TraceDoctorConfig extends Config(
+  new WithTraceDoctorBridge ++
+  new WithTacitBridge ++
+  new WithDefaultFireSimBridges ++
+  new WithFireSimConfigTweaks ++
+  new chipyard.WithBoomTraceDoctor(512) ++
+  new chipyard.TacitMegaBoomV3SRAMQueueDepth128Config)
+
+// Retry alias for the depth-32 build. Identical hardware -- it is a subclass, so
+// the Config composition is the same -- but a distinct TARGET_CONFIG string gives
+// it its own build quintuplet, hence its own local staging directory and its own
+// built-hwdb-entries file. Without that, two concurrent builds of the same recipe
+// overwrite each other's artifacts. Delete once a d32 bitstream exists.
+class FireSimMegaBoomV3TacitSRAMQueueDepth32TraceDoctorRetryConfig
+  extends FireSimMegaBoomV3TacitSRAMQueueDepth32TraceDoctorConfig
+
+// Depth sweep by runtime emulation. Physically 128-deep -- the EASIEST point to
+// place, since the reserve is only 12.5% of the queue there versus 50% at depth
+// 32, which is why the real d32 build stalls in the placer. The drop-threshold
+// register then emulates any shallower effective depth, and the emulation is
+// exact for lossy mode: occupancy never exceeds the threshold, so the entries
+// above it are never touched. Validate by emulating 64 and comparing against the
+// real d64 bitstream's numbers before trusting emulated 32.
+class FireSimMegaBoomV3TacitSweepConfig
+  extends FireSimMegaBoomV3TacitSRAMQueueDepth128TraceDoctorConfig
+
 // SRAM-queue Tacit and the TraceDoctor oracle capturing the same run side by side,
 // for cross-checking decoded Tacit traces against ground truth.
 class FireSimMegaBoomV3TacitSRAMQueueTraceDoctorConfig extends Config(

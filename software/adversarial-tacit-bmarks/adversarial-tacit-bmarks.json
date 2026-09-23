@@ -1,0 +1,21 @@
+{
+  "name": "adversarial-tacit-bmarks",
+  "base": "bare-base.json",
+  "workdir": "src",
+  "host-init": "build.sh",
+  "spike-args": "--extlib libspikedevices.so --device=trace_encoder_ctrl --trace l",
+  "jobs": [
+    {
+      "name": "branch-dense",
+      "bin": "build/branch-dense.elf"
+    },
+    {
+      "name": "indirect-dense",
+      "bin": "build/indirect-dense.elf"
+    },
+    {
+      "name": "mem-burst",
+      "bin": "build/mem-burst.elf"
+    }
+  ]
+}

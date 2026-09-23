@@ -1,0 +1,66 @@
+diff --git a/src/main/scala/v3/exu/core.scala b/src/main/scala/v3/exu/core.scala
+index 594140be..3ebdc690 100644
+--- a/src/main/scala/v3/exu/core.scala
++++ b/src/main/scala/v3/exu/core.scala
+@@ -717,6 +717,23 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
+   io.lsu.fence_dmem := (dis_valids zip wait_for_empty_pipeline).map {case (v,w) => v && w} .reduce(_||_)
+ 
+   val dis_stalls = dis_hazards.scanLeft(false.B) ((s,h) => s || h).takeRight(coreWidth)
++
++  // DEBUG-INSTRUMENTATION (temporary, jr-ring bistability study): per-cycle
++  // decode/dispatch summary when anything is in decode: which resource stalls.
++  if (COMMIT_LOG_PRINTF) {
++    val ds_dbg_cyc = RegInit(0.U(64.W))
++    ds_dbg_cyc := ds_dbg_cyc + 1.U
++    val rob_occ = rob.io.rob_tail_idx - rob.io.rob_head_idx
++    when (dec_valids.reduce(_||_)) {
++      printf("DS %d dv=%d df=%d disv=%d disf=%d disrdy=%d robrdy=%d ren=%d iqfull=%d bmfull=%d mp=%d robocc=%d jmp=%d niss=%d\n",
++        ds_dbg_cyc, PopCount(dec_valids), PopCount(dec_fire), PopCount(dis_valids), PopCount(dis_fire),
++        dis_ready, rob.io.ready, ren_stalls.reduce(_||_),
++        (0 until coreWidth).map(w => !dispatcher.io.ren_uops(w).ready).reduce(_||_),
++        branch_mask_full.reduce(_||_),
++        (brupdate.b1.mispredict_mask =/= 0.U) || brupdate.b2.mispredict, rob_occ,
++        iss_valids(jmp_unit_idx) && iss_uops(jmp_unit_idx).fu_code === FU_JMP, PopCount(iss_valids))
++    }
++  }
+   dis_fire := dis_valids zip dis_stalls map {case (v,s) => v && !s}
+   dis_ready := !dis_stalls.last
+ 
+@@ -1348,6 +1365,15 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
+ 
+ 
+   if (COMMIT_LOG_PRINTF) {
++    // DEBUG-INSTRUMENTATION (temporary, jr-ring bistability study): one line per
++    // cycle with any commit or a trace stall: count, oldest committed pc, stall.
++    val cm_dbg_cyc = RegInit(0.U(64.W))
++    cm_dbg_cyc := cm_dbg_cyc + 1.U
++    val cm_n = PopCount(rob.io.commit.arch_valids)
++    when (cm_n =/= 0.U || io.traceStall) {
++      printf("CM %d n=%d pc=%x ts=%d robempty=%d\n", cm_dbg_cyc, cm_n,
++        rob.io.commit.uops(PriorityEncoder(rob.io.commit.arch_valids)).debug_pc, io.traceStall, rob.io.empty)
++    }
+     var new_commit_cnt = 0.U
+ 
+     for (w <- 0 until coreWidth) {
+diff --git a/src/main/scala/v3/ifu/frontend.scala b/src/main/scala/v3/ifu/frontend.scala
+index 267940aa..e3682dff 100644
+--- a/src/main/scala/v3/ifu/frontend.scala
++++ b/src/main/scala/v3/ifu/frontend.scala
+@@ -920,6 +920,17 @@ class BoomFrontendModule(outer: BoomFrontend) extends LazyModuleImp(outer)
+ 
+ 
+   ftq.io.enq.valid          := f4.io.deq.valid && fb.io.enq.ready && !f4_delay
++
++  // DEBUG-INSTRUMENTATION (temporary, jr-ring bistability study): per-cycle
++  // frontend state, gated like the commit log so only *PrintfConfig builds see it.
++  if (COMMIT_LOG_PRINTF) {
++    val fe_dbg_cyc = RegInit(0.U(64.W))
++    fe_dbg_cyc := fe_dbg_cyc + 1.U
++    printf("FE %d s0v=%d s0=%x s1v=%d s1=%x f1r=%d f1t=%x s2v=%d s2=%x f2r=%d f2t=%x f2g=%d f3v=%d f3r=%d f4v=%d fbr=%d ftqr=%d\n",
++      fe_dbg_cyc, s0_valid, s0_vpc, s1_valid, s1_vpc, f1_do_redirect, f1_predicted_target,
++      s2_valid, s2_vpc, f2_do_redirect, f2_predicted_target, f2_correct_f1_ghist,
++      f3.io.deq.valid, f3_redirects.reduce(_||_), f4.io.deq.valid, fb.io.enq.ready, ftq.io.enq.ready)
++  }
+   ftq.io.enq.bits           := f4.io.deq.bits
+ 
+   val bpd_update_arbiter = Module(new Arbiter(new BranchPredictionUpdate, 2))

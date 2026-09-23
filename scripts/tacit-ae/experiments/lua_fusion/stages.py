@@ -143,6 +143,9 @@ def run(v: Variant, log: Path, force: bool) -> None:
         pass
     deploy = paths.FS / "deploy"
     manager = ["firesim", "-c", f"{RUNTIME_DIR}/{v.config}", "-a", HWDB]
+    # Each arm launches its own single-slot run farm; the config's
+    # terminate_on_completion tears it down when runworkload finishes.
+    sh(manager + ["launchrunfarm"], log, cwd=deploy)
     sh(manager + ["infrasetup"], log, cwd=deploy)
     sh(manager + ["runworkload"], log, cwd=deploy)
     r = newest_results_dir(v.workload)

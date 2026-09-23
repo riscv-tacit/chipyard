@@ -110,14 +110,14 @@ class Variant:
 # ---------------------------------------------------------------------- the arms
 BASE = Variant(
     key="base", tree="lua-5.4.7", workload="lua-fuse-base-mb", tag="base",
-    config="config_runtime_lua_base.yaml", optab="optab_base.json",
+    config="lua-fusion-base.yaml", optab="optab_base.json",
     label="baseline", table_label="unfused baseline",
     edit="none -- stock lua 5.4.7, byte-identical in every loaded section",
 )
 
 MULMUL = Variant(
     key="mulmul", tree="lua-fuse-mulmul", workload="lua-fuse-mulmul", tag="mulmul",
-    config="config_runtime_lua_mulmul.yaml", optab="optab_mulmul.json",
+    config="lua-fusion-mulmul.yaml", optab="optab_mulmul.json",
     label="+MUL→MUL", table_label="1 guard  MUL->MUL",
     edit="lvm.c:1478  vmbreak -> vmbreak_fused(OP_MUL)",
     guards=("OP_MUL",),
@@ -125,7 +125,7 @@ MULMUL = Variant(
 
 MMADD = Variant(
     key="mmadd", tree="lua-fuse-mulmul-muladd", workload="lua-fuse-mmadd", tag="mmadd",
-    config="config_runtime_lua_mmadd.yaml", optab="optab_mmadd.json",
+    config="lua-fusion-mmadd.yaml", optab="optab_mmadd.json",
     label="+MUL→ADD", table_label="2 guards MUL->MUL,MUL->ADD",
     edit="lvm.c:1478  vmbreak -> vmbreak_fused2(OP_MUL, OP_ADD)",
     guards=("OP_MUL", "OP_ADD"),
@@ -136,7 +136,7 @@ MMADD = Variant(
 # same workload, which is why workload_tag is pinned below.
 LEIMUL = Variant(
     key="leimul", tree="lua-fuse-leimul", workload="lua-fuse-leimul", tag="leimul",
-    config="config_runtime_lua_leimul.yaml", optab="optab_leimul.json",
+    config="lua-fusion-leimul.yaml", optab="optab_leimul.json",
     label="+LEI→MUL", table_label="1 guard  LEI->MUL (span pick)",
     edit="the LEI dispatch site -> vmbreak_fused(OP_MUL)",
     guards=("OP_MUL",), app="lua-leimul",
@@ -144,7 +144,7 @@ LEIMUL = Variant(
 
 LEIMULCTL = Variant(
     key="leimulctl", tree="lua-leimul-gt127", workload="lua-fuse-leimul", tag="leimul-gt127",
-    config="config_runtime_lua_leimul.yaml", optab="optab_leimul.json",
+    config="lua-fusion-leimul.yaml", optab="optab_leimul.json",
     label="LEI→MUL control", table_label="LEI->MUL layout control",
     edit="same guard with GUARD_TARGET=127, which never matches: layout without the guard",
     guards=(), app="lua-leimul-gt127", workload_tag="leimul",

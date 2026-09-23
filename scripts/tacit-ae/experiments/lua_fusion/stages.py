@@ -22,6 +22,10 @@ from uartlog import parse as parse_uartlog
 from variants import ANALYSIS, CFLAGS, CONFIGS, LUA_DISPATCH, Variant, outdir
 
 CROSS = "riscv64-unknown-linux-gnu"
+# FireSim's deploy/.gitignore drops every config_*.yaml at any depth, so the AE's
+# runtime configs and hardware database live in tacit-runtime/ under other names.
+RUNTIME_DIR = "tacit-runtime"
+HWDB = f"{RUNTIME_DIR}/tacit-ae-hwdb.yaml"
 # mandelbrot is the traced workload; the others only guard against a guard that
 # corrupts semantics in a way mandelbrot happens not to exercise.
 GATE_BENCHMARKS = (("mandelbrot.lua", "900"), ("spectralnorm.lua", "200"),
@@ -138,8 +142,9 @@ def run(v: Variant, log: Path, force: bool) -> None:
     except FileNotFoundError:
         pass
     deploy = paths.FS / "deploy"
-    sh(["firesim", "-c", v.config, "infrasetup"], log, cwd=deploy)
-    sh(["firesim", "-c", v.config, "runworkload"], log, cwd=deploy)
+    manager = ["firesim", "-c", f"{RUNTIME_DIR}/{v.config}", "-a", HWDB]
+    sh(manager + ["infrasetup"], log, cwd=deploy)
+    sh(manager + ["runworkload"], log, cwd=deploy)
     r = newest_results_dir(v.workload)
     remember(v, results=r)
     ok(r.name)

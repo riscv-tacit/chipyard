@@ -23,7 +23,7 @@ ways Python cannot — and then hands off to `driver.py`. Everything else is Pyt
 | --- | --- |
 | `build` | the RISC-V toolchain from the chipyard conda env |
 | `image` | `debugfs` (e2fsprogs), for verifying the binary inside the guest rootfs |
-| `run` | a Xilinx Alveo U250 with the `tacit_mega_boom_v3_sramqueue_lossy` bitstream, and exclusive use of the run farm — the runs are serialised for that reason |
+| `run` | an AWS F2 run farm (one f2.6xlarge) with the `control_f2_megaboom_tacit_pcim_sweep_progthresh` bitstream — MegaBoom v3 + TACIT, AGFI recorded in `sims/firesim/deploy/tacit-runtime/tacit-ae-hwdb.yaml` — and exclusive use of the run farm; the runs are serialised for that reason |
 | `decode` | ~32 GB RAM per decode (`bb_pair_stats` dominates; `--narrow` drops it and roughly halves both time and memory) |
 | all | `pandas`, `matplotlib`, `pyelftools` |
 

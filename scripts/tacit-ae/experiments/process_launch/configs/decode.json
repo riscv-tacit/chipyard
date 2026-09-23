@@ -1,0 +1,22 @@
+{
+  "encoded_trace": "",
+  "user_binaries": [
+    { "binary": "", "asids": [] },
+    { "binary": "", "asids": [] }
+  ],
+  "machine_binary": "",
+  "kernel_binary": "",
+  "kernel_jump_label_patch_log": "required",
+  "driver_binary_entry_tuples": [],
+  "receivers": {
+    "prv_breakdown": { "enabled": true },
+    "speedscope": { "enabled": true, "path": "pl.speedscope.json" },
+    "iteration_breakdown": {
+      "enabled": true,
+      "marker_func": "syscall",
+      "tracked_func": "rcu_do_batch",
+      "path": "pl.iteration_breakdown.csv"
+    }
+  },
+  "emulations": []
+}

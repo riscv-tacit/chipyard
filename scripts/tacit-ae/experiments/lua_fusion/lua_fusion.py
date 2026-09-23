@@ -39,7 +39,8 @@ from shell import (StageFailed, die, duration, have, md5, ok, out, say, sh,  # n
 from uartlog import parse as parse_uartlog                            # noqa: E402
 
 # ------------------------------------------------------------------ the experiment
-ANALYSIS = HERE / "analysis"          # plotters, bundle_run, the per-arm flow
+COMMON = HERE.parents[1]              # bundle_run.py and the shared modules
+ANALYSIS = HERE / "analysis"          # plotters and the per-arm flow
 CONFIGS = HERE / "configs"            # optabs and decoder receiver templates
 OUT = paths.OUT_ROOT / "lua_fusion"   # everything this produces, captures included
 
@@ -197,6 +198,12 @@ def image(force: bool) -> None:
             (OVERLAY / a.app).chmod(0o755)
         # rebuilt in-guest by host-init, so a stale cross-built copy must not linger
         (OVERLAY / "trace-run").unlink(missing_ok=True)
+        # marshal's dependency tracking does not cover the drivers baked into each
+        # job's initramfs (or a changed kernel), so a forced rebuild must start clean:
+        # a plain `marshal build` after a driver edit recompiles the module but keeps
+        # the stale kernel binaries.
+        if force:
+            sh(["./marshal", "clean", WORKLOAD_JSON], log, cwd=paths.FM)
         sh(["./marshal", "-v", "build", WORKLOAD_JSON], log, cwd=paths.FM)
         ok()
     # The guest must run the interpreters we just built; see verify_in_rootfs.
@@ -260,7 +267,7 @@ def bundle(results: Path, force: bool, narrow: bool) -> None:
         apps = []
         for name in (a.app, "trace-run"):
             apps += ["--app", dump_from_rootfs(a.image, f"/root/lua-dispatch/{name}", staged / name)]
-        sh([paths.PY, ANALYSIS / "bundle_run.py",
+        sh([paths.PY, COMMON / "bundle_run.py",
             "--results", results / a.job,
             "--template", template,
             "--out", a.bundle,

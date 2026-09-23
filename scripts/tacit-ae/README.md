@@ -15,6 +15,26 @@ captures are bundled, decoded in parallel, analysed, and compared. The pipeline 
 every step checks for its own outputs first, so a failure late in the flow does not cost an
 FPGA run.
 
+## `process_launch`
+
+The process-launch case study: a 10,000-iteration spawn-and-reap benchmark whose latency
+tail is set by RCU callback batching. One workload
+(`software/firemarshal/example-workloads/process-launch-f2.json`), seven jobs in one launch:
+chores, two 10k latency collections (control, and the fix -- the RCU grace-period kthread
+moved to SCHED_BATCH at runtime, so both share one kernel), two 256-launch runs traced by
+TACIT (control, fix), and two 10k collections with the diagnosis tracepoints enabled (full,
+and lite without the high-rate rcu_invoke_callback probe). It produces the control latency
+distribution, the tracepoint-overhead density plot and the fix's tail CCDF straight from the
+uartlogs, and decodes the two traces into speedscope profiles: the whole trace (about 300 MB,
+slow to open) and, cut from it, one small file per launch for the five slowest launches and a
+median one -- a launch is the launcher's root frame plus the child's that follows it, so the
+tail can be inspected wherever it fell (`out/process_launch/speedscope/`, open at
+https://www.speedscope.app).
+
+```sh
+./run.sh process_launch            # image -> fpga (7 slots) -> bundle -> decode -> analyse -> report
+```
+
 ## Quick start
 
 ```sh
@@ -52,14 +72,18 @@ paths.py                            where everything lives, derived from this fi
 shell.py                            running commands, the console protocol, timing
 uartlog.py                          parsing a FireSim uartlog
 firesim.py                          verify_in_rootfs(), dump_from_rootfs(), newest_results_dir()
+bundle_run.py                       packages a capture with the binaries and patch map that explain it
+speedscope_iters.py                 cuts single iterations (launcher root + child root) out of a profile
 experiments/lua_fusion/
   lua_fusion.py                     the arm table and the seven steps, in run order
-  analysis/                         bundle_run, the per-arm flow, and the plotters
-  configs/                          decoder receiver templates and per-build opcode tables
+  analysis/  configs/               the per-arm flow, the plotters, receiver templates, opcode tables
+experiments/process_launch/
+  process_launch.py                 the job table and the six steps, in run order
+  analysis/  configs/               the three latency plotters, the decode template
 out/<experiment>/                   everything it produced (gitignored; ~9 GB for lua_fusion)
 ```
 
-The four modules at the top are the common layer: every experiment needs them and getting
+The six modules at the top are the common layer: every experiment needs them and getting
 them wrong is silent -- a stale rootfs, a `\r` in a parsed number, a glob that matches
 nothing. Adding an experiment means adding `experiments/<name>/<name>.py` with its own
 analysis and configs beside it; nothing shared needs to change.

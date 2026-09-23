@@ -309,9 +309,9 @@ def main():
     (out / "config.json").write_text(json.dumps(cfg, indent=2) + "\n")
 
     # --- manifest ---
-    # this file lives at <chipyard>/scripts/tacit-ae/experiments/lua_fusion/analysis/bundle_run.py
+    # this file lives at <chipyard>/scripts/tacit-ae/bundle_run.py
     here = Path(__file__).resolve()
-    top = here.parents[5]
+    top = here.parents[2]
     decoder_root = top / "software/tacit_decoder"
     manifest = {
         "created": time.strftime("%Y-%m-%dT%H:%M:%S%z"),

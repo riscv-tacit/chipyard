@@ -1,0 +1,25 @@
+# BOOM per-cycle instrumentation (scripts/boom-debug-printf.patch), TacitMegaBoomV3BackpressurePrintfConfig,
+# jr-rtl-bp.elf, single 400-cycle sink outage -> 314 trace-stall cycles at core cycles 599701-600081.
+# Windows: before gate 594000-599600 (fast state), after gate 600100-604100 (slow state).
+=== window 594000..599600 (5601 cycles): FE lines 5601, CM lines 4435
+  fetch: s0v=1.00 s1v=1.00 s2v=0.92 f3v=0.92 f4v=0.92 per cycle
+  redirects: F1=2645 F2=2645 F3=2489 (per cycle F1=0.472 F2=0.472 F3=0.444); f2_ghist_fix=0
+  backpressure: fb_full=0.000 ftq_full=0.028
+  commit: insns=15252 (2.72 IPC) groups={1: 622, 3: 622, 4: 3191} trace_stall_cycles=0 rob_empty_cycles=0
+  s0 pc trace (low12; *=F1 redirect ^=F2 redirect !=F3): fa8*^ fb8! fc0* fd0^ fd8*! fe8^ ff0*! 000^ 008*! 018^ 020*! 030^ 040! 038*^ 040! 050* 060^ 068*! 078^ 080*! 090^ 098*! 0a8^ 0b0*! 0c0^ f40*! f50^ f60*! f50^ f60* f70^
+=== window 600100..604100 (4001 cycles): FE lines 4001, CM lines 3380
+  fetch: s0v=1.00 s1v=1.00 s2v=0.81 f3v=0.85 f4v=0.89 per cycle
+  redirects: F1=1917 F2=1917 F3=1335 (per cycle F1=0.479 F2=0.479 F3=0.334); f2_ghist_fix=0
+  backpressure: fb_full=0.229 ftq_full=0.000
+  commit: insns=8168 (2.04 IPC) groups={1: 1338, 2: 4, 3: 1330, 4: 708} trace_stall_cycles=0 rob_empty_cycles=0
+  s0 pc trace (low12; *=F1 redirect ^=F2 redirect !=F3): 008*! 018^ 020*! 030^ 040! 038*^ 040! 050* 060^ 068*! 078^ 080*! 090^ 098*! 090^ 098* 0a8^ 0b0*! 0c0^ f40*! 0c0^ f40* f50^ f60*! f70^ f78*! f70^ f78* f80^ f90*! f80^
+=== DS window 594000..599600 (5601 cycles): decode-active cycles 5601 (1.00)
+  mean dec_valid=4.00 dec_fire=2.72 dis_valid=3.11 dis_fire=2.72  (dispatch/cycle over window 2.72)
+  cycles with !dis_ready=0.319 !rob_ready=0.000 ren_stall=0.000 iq_full=0.319 brmask_full=0.000 mispred_flush=0.000
+  rob occupancy: mean=86.7 min=80 max=92 hist(by16)={80: 5601}
+=== DS window 600100..604100 (4001 cycles): decode-active cycles 4001 (1.00)
+  mean dec_valid=4.00 dec_fire=2.04 dis_valid=2.69 dis_fire=2.04  (dispatch/cycle over window 2.04)
+  cycles with !dis_ready=0.490 !rob_ready=0.000 ren_stall=0.000 iq_full=0.490 brmask_full=0.000 mispred_flush=0.000
+  rob occupancy: mean=82.4 min=79 max=100 hist(by16)={64: 166, 80: 3830, 96: 5}
+jump-unit window 594000:599600: jmp_issue/cycle=0.889 total_issue/cycle=2.72
+jump-unit window 600100:604100: jmp_issue/cycle=0.667 total_issue/cycle=2.04

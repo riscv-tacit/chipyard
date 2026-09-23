@@ -1,0 +1,23 @@
+# ring-size sweep, TacitMegaBoomV3BackpressureConfig, +tacit_bp_mode=every +tacit_bp_beats=20000 +tacit_bp_off=150
+RESULT bench=ring8.bp mode=untraced rep=0 iters=8192 cycles=147492 instret=409557 stall=0 bytes=0 srcstall=0 start_cycle=258564 gap=0 dropped=0
+RESULT bench=ring8.bp mode=traced rep=0 iters=8192 cycles=147587 instret=409557 stall=337 bytes=0 srcstall=0 start_cycle=420398 gap=0 dropped=0
+RESULT bench=ring12.bp mode=untraced rep=0 iters=5461 cycles=147470 instret=404047 stall=0 bytes=0 srcstall=0 start_cycle=650590 gap=0 dropped=0
+RESULT bench=ring12.bp mode=traced rep=0 iters=5461 cycles=196618 instret=404047 stall=113 bytes=0 srcstall=0 start_cycle=811700 gap=0 dropped=0
+RESULT bench=ring14.bp mode=untraced rep=0 iters=4681 cycles=147470 instret=402487 stall=0 bytes=0 srcstall=0 start_cycle=1090930 gap=0 dropped=0
+RESULT bench=ring14.bp mode=traced rep=0 iters=4681 cycles=157949 instret=402487 stall=237 bytes=0 srcstall=0 start_cycle=1252168 gap=0 dropped=0
+RESULT bench=ring15.bp mode=untraced rep=0 iters=4369 cycles=147471 instret=401863 stall=0 bytes=0 srcstall=0 start_cycle=1492317 gap=0 dropped=0
+RESULT bench=ring15.bp mode=traced rep=0 iters=4369 cycles=147577 instret=401863 stall=347 bytes=0 srcstall=0 start_cycle=1653346 gap=0 dropped=0
+RESULT bench=ring16.bp mode=untraced rep=0 iters=4096 cycles=147469 instret=401317 stall=0 bytes=0 srcstall=0 start_cycle=1883486 gap=0 dropped=0
+RESULT bench=ring16.bp mode=traced rep=0 iters=4096 cycles=185905 instret=401317 stall=113 bytes=0 srcstall=0 start_cycle=2044705 gap=0 dropped=0
+RESULT bench=ring17.bp mode=untraced rep=0 iters=3855 cycles=147464 instret=400823 stall=0 bytes=0 srcstall=0 start_cycle=2312761 gap=0 dropped=0
+RESULT bench=ring17.bp mode=traced rep=0 iters=3855 cycles=178518 instret=400823 stall=180 bytes=0 srcstall=0 start_cycle=2473843 gap=0 dropped=0
+RESULT bench=ring18.bp mode=untraced rep=0 iters=3640 cycles=147427 instret=400297 stall=0 bytes=0 srcstall=0 start_cycle=2734952 gap=0 dropped=0
+RESULT bench=ring18.bp mode=traced rep=0 iters=3640 cycles=147523 instret=400297 stall=251 bytes=0 srcstall=0 start_cycle=2896208 gap=0 dropped=0
+RESULT bench=ring20.bp mode=untraced rep=0 iters=3276 cycles=147425 instret=399557 stall=0 bytes=0 srcstall=0 start_cycle=3126197 gap=0 dropped=0
+RESULT bench=ring20.bp mode=traced rep=0 iters=3276 cycles=147623 instret=399557 stall=248 bytes=0 srcstall=0 start_cycle=3287278 gap=0 dropped=0
+RESULT bench=ring24.bp mode=untraced rep=0 iters=2730 cycles=147418 instret=398441 stall=0 bytes=0 srcstall=0 start_cycle=3517575 gap=0 dropped=0
+RESULT bench=ring24.bp mode=traced rep=0 iters=2730 cycles=147590 instret=398441 stall=177 bytes=0 srcstall=0 start_cycle=3678615 gap=0 dropped=0
+RESULT bench=ring32.bp mode=untraced rep=0 iters=2048 cycles=147434 instret=397125 stall=0 bytes=0 srcstall=0 start_cycle=3908857 gap=0 dropped=0
+RESULT bench=ring32.bp mode=traced rep=0 iters=2048 cycles=174801 instret=397125 stall=148 bytes=0 srcstall=0 start_cycle=4069951 gap=0 dropped=0
+RESULT bench=ringjit16.bp mode=untraced rep=0 iters=4096 cycles=195434 instret=418223 stall=0 bytes=0 srcstall=0 start_cycle=4333185 gap=0 dropped=0
+RESULT bench=ringjit16.bp mode=traced rep=0 iters=4096 cycles=196407 instret=418223 stall=121 bytes=0 srcstall=0 start_cycle=4542866 gap=0 dropped=0

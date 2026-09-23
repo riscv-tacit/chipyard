@@ -30,3 +30,6 @@ project/project/
 .classpath_cache/
 .vscode/
 tests/build/
+
+# chiseltest output
+test_run_dir/

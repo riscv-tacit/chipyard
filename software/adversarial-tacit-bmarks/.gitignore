@@ -1,0 +1,7 @@
+src/build/
+*.elf
+*.elf-nodisk
+*.dump
+__pycache__/
+src/build-sim/
+src/build-rtl/

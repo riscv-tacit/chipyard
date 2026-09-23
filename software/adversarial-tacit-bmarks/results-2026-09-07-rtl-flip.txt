@@ -1,0 +1,20 @@
+# Verilator, TacitMegaBoomV3BackpressureConfig, jr-rtl-bp.elf (4096 rounds)
+## periodic: +tacit_bp_mode=every +tacit_bp_beats=5000 +tacit_bp_off=400
+RESULT bench=jr_f3.always mode=untraced rep=0 iters=4096 cycles=147469 instret=401317 stall=0 bytes=0 srcstall=0 start_cycle=36693 gap=0 dropped=0
+RESULT bench=jr_f3.always mode=traced rep=0 iters=4096 cycles=147470 instret=401317 stall=0 bytes=0 srcstall=0 start_cycle=198476 gap=0 dropped=0
+RESULT bench=jr_f3.bp mode=untraced rep=0 iters=4096 cycles=147469 instret=401317 stall=0 bytes=0 srcstall=0 start_cycle=428373 gap=0 dropped=0
+RESULT bench=jr_f3.bp mode=traced rep=0 iters=4096 cycles=161478 instret=401317 stall=4177 bytes=0 srcstall=0 start_cycle=589416 gap=0 dropped=0
+RESULT bench=jr_f3.always2 mode=untraced rep=0 iters=4096 cycles=147478 instret=401317 stall=0 bytes=0 srcstall=0 start_cycle=833257 gap=0 dropped=0
+RESULT bench=jr_f3.always2 mode=traced rep=0 iters=4096 cycles=147460 instret=401317 stall=0 bytes=0 srcstall=0 start_cycle=994618 gap=0 dropped=0
+## single outage: +tacit_bp_mode=burst +tacit_bp_period=600000 +tacit_bp_off=400
+RESULT bench=jr_f3.always mode=untraced rep=0 iters=4096 cycles=147469 instret=401317 stall=0 bytes=0 srcstall=0 start_cycle=36693 gap=0 dropped=0
+RESULT bench=jr_f3.always mode=traced rep=0 iters=4096 cycles=147470 instret=401317 stall=0 bytes=0 srcstall=0 start_cycle=198476 gap=0 dropped=0
+RESULT bench=jr_f3.bp mode=untraced rep=0 iters=4096 cycles=147469 instret=401317 stall=0 bytes=0 srcstall=0 start_cycle=428373 gap=0 dropped=0
+RESULT bench=jr_f3.bp mode=traced rep=0 iters=4096 cycles=193459 instret=401317 stall=314 bytes=0 srcstall=0 start_cycle=589416 gap=0 dropped=0
+RESULT bench=jr_f3.always2 mode=untraced rep=0 iters=4096 cycles=147475 instret=401317 stall=0 bytes=0 srcstall=0 start_cycle=864957 gap=0 dropped=0
+RESULT bench=jr_f3.always2 mode=traced rep=0 iters=4096 cycles=147460 instret=401317 stall=0 bytes=0 srcstall=0 start_cycle=1026318 gap=0 dropped=0
+## DMA sink, DRAMSim, no outage (jr-rtl.elf)
+RESULT bench=jr_f3.dma mode=untraced rep=0 iters=4096 cycles=147470 instret=401317 stall=0 bytes=0 srcstall=0 start_cycle=36752 gap=0 dropped=0
+RESULT bench=jr_f3.dma mode=traced rep=0 iters=4096 cycles=147471 instret=401317 stall=0 bytes=204784 srcstall=2308 start_cycle=198251 gap=0 dropped=0
+RESULT bench=jr_f3.always mode=untraced rep=0 iters=4096 cycles=147469 instret=401317 stall=0 bytes=0 srcstall=0 start_cycle=434970 gap=0 dropped=0
+RESULT bench=jr_f3.always mode=traced rep=0 iters=4096 cycles=147463 instret=401317 stall=0 bytes=0 srcstall=0 start_cycle=596252 gap=0 dropped=0

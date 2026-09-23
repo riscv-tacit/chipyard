@@ -1,0 +1,12 @@
+{
+  "name": "tacit-overhead-report",
+  "base": "bare-base.json",
+  "workdir": "src",
+  "host-init": "build.sh",
+  "spike-args": "--extlib libspikedevices.so --device=trace_encoder_ctrl --trace l",
+  "jobs": [
+    { "name": "branch",   "bin": "build/report-branch.elf" },
+    { "name": "indirect", "bin": "build/report-indirect.elf" },
+    { "name": "mem",      "bin": "build/report-mem.elf" }
+  ]
+}

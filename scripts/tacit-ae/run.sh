@@ -2,15 +2,19 @@
 #
 # Entry point for the TACIT artifact-evaluation experiments.
 #
-#   ./run.sh                                   the default experiment, all stages
-#   ./run.sh lua_fusion --list                 show the plan and exit
-#   ./run.sh lua_fusion --stages decode,report  no FPGA needed if bundles exist
-#   ./run.sh --arms base,mulmul --force        redo two arms from scratch
+#   ./run.sh <experiment> [flags]        one experiment, all its steps, resuming past done ones
+#   ./run.sh lua_fusion --list           show the plan and exit
+#   ./run.sh lua_fusion --force          redo every step
+#   ./run.sh lua_fusion --narrow         decode without bb_pair_stats
+#
+# Experiments live in experiments/<name>/<name>.py, each a self-contained linear
+# script over the common layer (paths, shell, uartlog, firesim). No argument means
+# lua_fusion.
 #
 # This script exists only to set up the environment, which is the one thing that
 # cannot be done from Python: the four scripts below mutate the shell (PATH,
 # RISCV, conda, Xilinx), and Python cannot source a shell script. Everything after
-# the handoff -- stages, resume, logging, reporting -- lives in driver.py.
+# the handoff -- steps, resume, logging, reporting -- lives in the experiment's script.
 set -uo pipefail
 
 AE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -33,5 +37,10 @@ cd "$CY/sims/firesim" && source ./sourceme-manager.sh --skip-ssh-setup >/dev/nul
   source /ecad/tools/xilinx/Vitis/2021.1/settings64.sh >/dev/null 2>&1
 set -u
 
+# first argument names the experiment when it is not a flag
+EXP=lua_fusion
+if [ $# -gt 0 ] && [ "${1#-}" = "$1" ]; then EXP=$1; shift; fi
+SCRIPT="$AE/experiments/$EXP/$EXP.py"
+[ -f "$SCRIPT" ] || { echo "no experiment '$EXP'. Available: $(ls "$AE/experiments")" >&2; exit 1; }
 cd "$AE"
-exec "$CY/.conda-env/bin/python3" "$AE/driver.py" "$@"
+exec "$CY/.conda-env/bin/python3" "$SCRIPT" "$@"

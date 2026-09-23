@@ -5,7 +5,7 @@
 # how two "comparable" folders quietly stop being comparable.
 set -euo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-CY=$(cd "$HERE/../../../../.." && pwd)
+CY=$(cd "$HERE/../../../../.." && pwd)   # analysis/ -> lua_fusion/ -> experiments/ -> tacit-ae/ -> scripts/ -> chipyard
 PY=${PY:-$CY/.conda-env/bin/python3}
 S=$HERE
 

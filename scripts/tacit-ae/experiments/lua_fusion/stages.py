@@ -26,6 +26,8 @@ CROSS = "riscv64-unknown-linux-gnu"
 # runtime configs and hardware database live in tacit-runtime/ under other names.
 RUNTIME_DIR = "tacit-runtime"
 HWDB = f"{RUNTIME_DIR}/tacit-ae-hwdb.yaml"
+# The manager parses a build-recipes file even for runtime tasks (metasimulation).
+RECIPES = f"{RUNTIME_DIR}/tacit-ae-build-recipes.yaml"
 # mandelbrot is the traced workload; the others only guard against a guard that
 # corrupts semantics in a way mandelbrot happens not to exercise.
 GATE_BENCHMARKS = (("mandelbrot.lua", "900"), ("spectralnorm.lua", "200"),
@@ -142,7 +144,7 @@ def run(v: Variant, log: Path, force: bool) -> None:
     except FileNotFoundError:
         pass
     deploy = paths.FS / "deploy"
-    manager = ["firesim", "-c", f"{RUNTIME_DIR}/{v.config}", "-a", HWDB]
+    manager = ["firesim", "-c", f"{RUNTIME_DIR}/{v.config}", "-a", HWDB, "-r", RECIPES]
     # Each arm launches its own single-slot run farm; the config's
     # terminate_on_completion tears it down when runworkload finishes.
     sh(manager + ["launchrunfarm"], log, cwd=deploy)

@@ -13,6 +13,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+import paths
 from shell import die, ok, step
 
 
@@ -51,7 +52,8 @@ def spec_dir() -> Path:
 
 def check_spec_dir() -> None:
     """The image step compiles SPEC through the installation; fail before anything expensive.
-    speckle's gen_binaries.sh reads $SPEC_DIR, so the resolved path is exported for it."""
+    speckle's gen_binaries.sh reads $SPEC_DIR, so the resolved path is exported for it.
+    Also checks the host Fortran compiler that build needs."""
     step("SPEC CPU2017 installation (SPEC_DIR)")
     d = spec_dir()
     if not (d / "shrc").exists():
@@ -59,6 +61,16 @@ def check_spec_dir() -> None:
             f"to install the artifact's ISO there, or export SPEC_DIR=/path/to/your/cpu2017")
     os.environ["SPEC_DIR"] = str(d)
     ok(str(d))
+
+    # speckle/host.cfg builds the host side (which generates the run directories the overlay
+    # copies inputs from) with $CONDA_PREFIX/bin/{gcc,g++,gfortran}; chipyard's env has no
+    # gfortran, and without it only 648.exchange2_s fails, eight minutes into the image step.
+    step("host gfortran for SPEC's host build")
+    fc = Path(os.environ.get("CONDA_PREFIX") or paths.CONDA) / "bin" / "gfortran"
+    if not os.access(fc, os.X_OK):
+        die(f"{fc} missing -- run scripts/tacit-ae/setup-ae.sh, or install it directly with\n"
+            f"    conda install -y -p {fc.parent.parent} --file {paths.CY}/scripts/tacit-ae/gfortran.conda-explicit.txt")
+    ok(str(fc))
 
 
 # ---- counter logs -------------------------------------------------------------------

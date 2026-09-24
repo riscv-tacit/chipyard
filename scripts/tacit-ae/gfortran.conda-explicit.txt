@@ -1,0 +1,7 @@
+# Host gfortran for SPEC's host build (648.exchange2_s): software/spec2017/speckle/host.cfg
+# compiles with $CONDA_PREFIX/bin/gfortran, and chipyard's conda env ships only gcc/gxx.
+# Exact builds matching the env's gcc 13.2.0 (hc7bed06_13); an @EXPLICIT list skips the
+# solver, which crashes on this env. Every dependency is already in the chipyard env.
+@EXPLICIT
+https://conda.anaconda.org/conda-forge/linux-64/gfortran_impl_linux-64-13.2.0-h9efe08d_13.conda#8c647fad3d56e5e4de32f976a2c226f0
+https://conda.anaconda.org/conda-forge/linux-64/gfortran-13.2.0-hc7bed06_13.conda#10118b23cacb5fb7c48125f9aa60fed8

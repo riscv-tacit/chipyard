@@ -55,6 +55,15 @@ fi
 banner "2/5  SPEC submodule (skipped by chipyard's setup; holds the workloads and the SPEC build flow)"
 git submodule update --init --recursive software/spec2017
 echo "   software/spec2017 at $(git -C software/spec2017 rev-parse --short HEAD)"
+# speckle/host.cfg compiles the host side of SPEC (648.exchange2_s is Fortran) with
+# $CONDA_PREFIX/bin/gfortran, and chipyard's env ships only gcc/gxx. An explicit package
+# list: conda's solver crashes on this env, and the pinned builds match its gcc 13.2.0.
+if [ -x .conda-env/bin/gfortran ]; then
+  echo "   host gfortran present"
+else
+  conda install -y -q -p "$CY/.conda-env" --file "$AE/gfortran.conda-explicit.txt" >/dev/null
+  echo "   host gfortran installed"
+fi
 
 banner "3/5  trace decoder"
 ( cd software/tacit_decoder && cargo build --release 2>&1 | tail -2 )

@@ -52,6 +52,28 @@ them brings it to 1.07x; near indirect jumps 1.78x, far ones 1.44x.
 ./run.sh adversarial               # image (cross-compile) -> driver -> fpga (3 slots) -> analyse -> report
 ```
 
+## `ipi_storm`
+
+The IPI-storm case study, on the one dual-core bitstream
+(`control_f2_dualmegaboom_tacit_pcim_sramq_d64_trapprv`: two MegaBoom v3 harts, each with its own
+TACIT encoder). One process, two threads (`software/firemarshal/example-workloads/ipi-storm`): a
+reader pinned to CPU 0 spins over a shared page while a writer pinned to CPU 1 flips the page's
+protection 200 times. Each flip makes Linux flush the reader's TLB through an OpenSBI remote
+fence, so the reader's hart takes an inter-processor interrupt into machine mode and returns.
+`trace-submit` traces both harts (`tacit0.out`, `tacit1.out`); the reader's trace is decoded with
+the `func_path` receiver, which follows every `_trap_handler` invocation during the process that
+handled a TLB request. Two figures: cycle attribution over the handler's basic blocks (the top 12
+and the rest, with the cumulative share) and the latency of the first ten blocks after each return
+to the reader. Two slots in one launch (chores and the traced run), a few minutes on the farm.
+
+The reader's trace is the one for the hart Linux calls CPU 0, which is whichever hart won
+OpenSBI's boot lottery; the script reads it from the run's OpenSBI banner (`Boot HART ID`)
+instead of assuming it. Hart 0 wins on this bitstream.
+
+```sh
+./run.sh ipi_storm                 # image -> driver -> fpga (2 slots) -> bundle -> decode -> analyse -> report
+```
+
 ## `spec_overhead`, `spec_lossy`, `spec_oracle`
 
 SPEC CPU2017 intspeed, eleven benchmarks (xz counts twice, one per workload), three
@@ -172,7 +194,7 @@ from `sims/firesim/deploy` (with `sims/firesim/sourceme-manager.sh` sourced) cle
 | --- | --- |
 | `build` | the RISC-V toolchain from the chipyard conda env (`./build-setup.sh riscv-tools`) |
 | `image` | `debugfs` (e2fsprogs), for verifying each binary inside the guest rootfs |
-| `fpga` | AWS credentials configured for the FireSim manager (`aws configure`, or `firesim managerinit --platform f2`), permission to launch four `f2.6xlarge` on demand, and exclusive use of the run farm tag `tacit-ae-runfarm`. The bitstream is `control_f2_megaboom_tacit_pcim_sramq_oracle_asserts_d64` (MegaBoom v3 + TACIT with its 64-entry SRAM packet queue and the TraceDoctor oracle, the design the paper's numbers come from); its AGFI and build recipe are in `sims/firesim/deploy/tacit-runtime/`. |
+| `fpga` | AWS credentials configured for the FireSim manager (`aws configure`, or `firesim managerinit --platform f2`), permission to launch four `f2.6xlarge` on demand, and exclusive use of the run farm tag `tacit-ae-runfarm`. The bitstream is `control_f2_megaboom_tacit_pcim_sramq_oracle_asserts_d64` (MegaBoom v3 + TACIT with its 64-entry SRAM packet queue and the TraceDoctor oracle, the design the paper's numbers come from); its AGFI and build recipe are in `sims/firesim/deploy/tacit-runtime/`. `process_launch` runs on `control_f2_megaboom_tacit_pcim_sramq_oracle_asserts_d64_trapprv` (the same design with the encoder's trap-privilege fix) and `ipi_storm` on its dual-core counterpart `control_f2_dualmegaboom_tacit_pcim_sramq_d64_trapprv`. |
 | `decode` | the decoder binary: `cargo build --release` in `software/tacit_decoder` (cargo from rustup, typically `~/.cargo/bin`). About 2.5 GB RAM per decode; the three run in parallel when memory allows. |
 | all | `pandas`, `matplotlib`, `pyelftools` |
 | `spec_*` `image` | a licensed SPEC CPU2017 installation at `~/spec2017/cpu2017` (what `setup-ae.sh` installs) or at `$SPEC_DIR`, compiled with the chipyard RISC-V Linux toolchain |
@@ -205,6 +227,7 @@ experiments/spec_overhead/          image -> driver -> fpga -> analyse (analysis
 experiments/spec_lossy/             image -> driver -> fpga -> analyse (analysis/compare_lossy.py)
 experiments/spec_oracle/            image -> driver -> fpga -> bundle -> decode -> analyse (analysis/plot_eps*.py, configs/decode.json)
 experiments/adversarial/            image -> driver -> fpga -> analyse (analysis/parse_results.py, plot_overhead.py)
+experiments/ipi_storm/              image -> driver -> fpga -> bundle -> decode -> analyse (analysis/plot_func_path_pareto.py, plot_post_exit.py, configs/decode.json)
 out/<experiment>/                   everything it produced (gitignored; ~9 GB for lua_fusion)
 ```
 

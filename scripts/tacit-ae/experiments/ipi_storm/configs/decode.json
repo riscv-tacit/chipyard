@@ -1,0 +1,24 @@
+{
+  "encoded_trace": "",
+  "user_binaries": [
+    { "binary": "", "asids": [] },
+    { "binary": "", "asids": [] }
+  ],
+  "machine_binary": "",
+  "kernel_binary": "",
+  "kernel_jump_label_patch_log": "required",
+  "driver_binary_entry_tuples": [],
+  "receivers": {
+    "func_path": {
+      "enabled": true,
+      "func_name": "_trap_handler",
+      "ctx": 0,
+      "filter_contains": "tlb_process",
+      "path": "ipi.func_path.csv",
+      "bb_path": "ipi.func_path.bb.csv",
+      "post_exit_path": "ipi.func_path.post_exit.csv",
+      "post_exit_n": 10
+    }
+  },
+  "emulations": []
+}

@@ -325,8 +325,9 @@ def main():
                 die(f"{recv} asked for handlers from disptab but no bundled app has one")
             rcfg["handlers"] = found
         # every output key, not just "path": a receiver that writes elsewhere (hist_path,
-        # seq_path) would otherwise scatter files outside the bundle
-        for key in ("path", "hist_path", "seq_path"):
+        # seq_path, func_path's bb_path and post_exit_path) would otherwise scatter files
+        # outside the bundle
+        for key in ("path", "hist_path", "seq_path", "bb_path", "post_exit_path"):
             if isinstance(rcfg.get(key), str) and rcfg[key]:
                 rcfg[key] = f"out/{Path(rcfg[key]).name}"
         cfg["receivers"][recv] = rcfg

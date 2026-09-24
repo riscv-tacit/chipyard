@@ -64,9 +64,12 @@ static void run_traced(const char *name, int rep, kernel_fn k, uint64_t iters, u
   /* sink and mode are written while the encoder is disabled (hardware contract) */
   MMIO_W(l_trace_encoder_configure_target(enc, target));
   MMIO_W(enc->TR_TE_LOSSY = lossy);
-  uint64_t gap0  = MMIO_R(enc->TR_TE_GAP_CYCLES);
-  uint64_t drop0 = MMIO_R(enc->TR_TE_DROPPED);
-  uint64_t stall0 = MMIO_R(l_trace_encoder_get_stall_count(enc));
+  /* The encoder's own counters (stall, gap, dropped) are window-scoped since the
+   * 2026-09-07 RTL: cleared on enable, frozen on disable, so the value read after
+   * disable describes exactly this window and is reported as is. Reading a
+   * baseline before enable would subtract the PREVIOUS window's frozen total and
+   * wrap. The DMA sink's counters still accumulate from reset, so those two are
+   * deltas. */
   uint64_t bytes0 = MMIO_R(l_trace_sink_dma_count(dma));
   uint64_t src0   = MMIO_R(l_trace_sink_dma_src_stall(dma));
   fence();
@@ -85,8 +88,8 @@ static void run_traced(const char *name, int rep, kernel_fn k, uint64_t iters, u
   uint64_t src1   = MMIO_R(l_trace_sink_dma_src_stall(dma));
   uint64_t gap1   = MMIO_R(enc->TR_TE_GAP_CYCLES);
   uint64_t drop1  = MMIO_R(enc->TR_TE_DROPPED);
-  report(name, "traced", rep, iters, c1 - c0, i1 - i0, stall1 - stall0, bytes1 - bytes0, src1 - src0,
-         c0, gap1 - gap0, drop1 - drop0);
+  report(name, "traced", rep, iters, c1 - c0, i1 - i0, stall1, bytes1 - bytes0, src1 - src0,
+         c0, gap1, drop1);
   if (bytes1 + 4096 > DMA_MAX_SIZE)
     printf("WARN dma buffer nearly full (%" PRIu64 " bytes), overflow mode will drop\n", bytes1);
 }

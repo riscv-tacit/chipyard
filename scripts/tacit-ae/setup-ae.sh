@@ -35,6 +35,16 @@ cd "$CY"
 need conda "install Miniforge/Miniconda first"
 need cargo "install rustup (https://rustup.rs), then rerun"
 
+banner "0/5  host packages: tmux (one window per experiment in run.sh all), e2fsprogs (debugfs, to read guest images)"
+for pkg in tmux e2fsprogs; do
+  bin=$pkg; [ "$pkg" = e2fsprogs ] && bin=debugfs
+  if command -v "$bin" >/dev/null 2>&1 || [ -x "/usr/sbin/$bin" ]; then
+    echo "   $pkg present"
+  elif command -v yum >/dev/null 2>&1; then sudo yum install -y "$pkg" >/dev/null && echo "   $pkg installed (yum)"
+  elif command -v apt-get >/dev/null 2>&1; then sudo apt-get install -y "$pkg" >/dev/null && echo "   $pkg installed (apt)"
+  else echo "   WARNING: $pkg missing and no known package manager"; fi
+done
+
 banner "1/5  chipyard build-setup: conda env, RISC-V toolchain, FireSim, FireMarshal (about an hour the first time)"
 if [ -x .conda-env/bin/python3 ] && [ -f sims/firesim/sourceme-manager.sh ] && [ -x software/firemarshal/marshal ]; then
   echo "   already set up (.conda-env, sims/firesim, software/firemarshal present) -- skipping"

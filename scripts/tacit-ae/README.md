@@ -104,8 +104,8 @@ experiments touch only their own run farm (distinct `run_farm_tag`), results dir
 `out/` tree, so they run at the same time, one tmux window each in a session named `tacit-ae`:
 `tmux attach -t tacit-ae` shows them live (Ctrl-b n / p moves between experiments, Ctrl-b d
 detaches), a finished window stays open until Enter is pressed, and each console is also kept
-in `out/<experiment>/logs/run.log`. Without tmux, or with `--no-tmux`, they run in the calling
-console with the experiment's name in front of every line. Re-running resumes.
+in `out/<experiment>/logs/run.log`. Without tmux installed, or with `--no-tmux`, they run in the
+calling console with the experiment's name in front of every line (and `all` says so). Re-running resumes.
 
 ### One experiment
 
@@ -146,8 +146,8 @@ cd scripts/tacit-ae
 ./run.sh all                            # everything (SPEC on train, train, ref); tmux attach -t tacit-ae
 ```
 
-`setup-ae.sh` runs chipyard's `build-setup.sh riscv-tools` (conda env, RISC-V toolchain,
-FireSim, FireMarshal), initialises the SPEC submodule that chipyard's setup skips, builds the
+`setup-ae.sh` installs `tmux` and `e2fsprogs` if the instance lacks them, runs chipyard's
+`build-setup.sh riscv-tools` (conda env, RISC-V toolchain, FireSim, FireMarshal), initialises the SPEC submodule that chipyard's setup skips, builds the
 trace decoder, checks the AWS identity, key file and instance tag, and installs SPEC CPU2017
 from the artifact's ISO bucket (`s3://tacit-ae-spec2017-696925255345`, readable by every
 reviewer's IAM user) into `~/spec2017/cpu2017`, which is where the `spec_*` experiments look.

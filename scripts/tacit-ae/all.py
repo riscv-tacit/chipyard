@@ -137,7 +137,7 @@ def run_all_tmux(names: list[str], force: bool) -> dict[str, int]:
 
 
 def run_all(names: list[str], force: bool) -> dict[str, int]:
-    say(f"run (parallel: {', '.join(names)})")
+    say(f"run (parallel, in this console: {', '.join(names)})")
     results: dict[str, int] = {}
     lock = threading.Lock()
 
@@ -163,6 +163,10 @@ def main(argv=None) -> int:
                     help="run the experiments in this console (prefixed lines) instead of one tmux window each")
     args = ap.parse_args(argv)
     use_tmux = not args.no_tmux and shutil.which("tmux") is not None
+    if not args.no_tmux and not use_tmux and not args.list:
+        print("  note: tmux is not installed, so the experiments will run in this console with their\n"
+              "  names in front of every line (sudo yum/apt install tmux, or setup-ae.sh, gives each\n"
+              "  one its own window next time). Their consoles are kept in out/<experiment>/logs/run.log.")
     names = args.experiments.split(",") if args.experiments else discover()
     for n in names:
         script(n)

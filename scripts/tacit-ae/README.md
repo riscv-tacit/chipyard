@@ -83,8 +83,8 @@ images and driver exist; the per-input tag lets a ref run share the farm with a 
 `./run.sh all` runs). Each input set is its own workload JSON, its own SPEC compile and set of
 images, and its own output tree (`out/spec_overhead/<input>/`), so a ref run sits beside the
 train one. The paper reports overhead on ref and lossy coverage on train; ref overhead runs
-are long (perlbench ref is about 30 minutes of guest time, x264 about an hour) and `all`
-does not run them. `spec_oracle` is ref only: its five-second window needs a run that lasts
+are long (the slowest jobs, xz and mcf with tracing, take up to two days on the farm, against
+about four hours for train) and `all` does not run them. `spec_oracle` is ref only: its five-second window needs a run that lasts
 longer than the test inputs do.
 
 The workloads are `software/spec2017/marshal-configs/spec17-intspeed-{test,train,ref}-overhead.json` and `-{test,train,ref}-lossy-full.json` (whole-run lossy; the `train-lossy` one without `-full` is an older windowed measurement) and `spec17-intspeed-ref-oracle.json`;
@@ -136,7 +136,7 @@ account's credentials in `~/.aws/`, the run-farm key in `~/firesim.pem`, and the
 tagged `firesim-tutorial-username`, which the manager reads to pick the key pair, VPC and
 security groups (nothing in this tree needs editing for that). `conda` and `cargo` must be on
 the PATH; everything else is built below. Run the long steps inside `tmux` or `screen`: the
-setup takes about an hour and the FPGA phases up to two hours (`run.sh all` opens its own
+setup takes about an hour and `run.sh all` about five hours, most of it the train runs (it opens its own
 tmux session for the parallel phase; the preparation before it runs in the calling shell).
 
 ```sh

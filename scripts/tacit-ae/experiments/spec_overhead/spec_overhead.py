@@ -36,6 +36,9 @@ from shell import (StageFailed, die, duration, have, ok, say, sh, skip,  # noqa:
 ANALYSIS = HERE / "analysis"
 INPUTS = ("test", "train", "ref")
 DEFAULT_INPUT = "train"      # what `./run.sh all` runs; the paper's overhead numbers are ref
+# Wall-clock farm time on F2 at 50 MHz: test and train measured 2026-09-24 (train 3h38m);
+# ref from the 2026-09-01 run, whose slowest jobs (xz and mcf, traced) took 37-42 h.
+FARM_TIME = {"test": "about 1.5 hours", "train": "about 4 hours", "ref": "up to two days"}
 
 # Set by configure(): everything that depends on the SPEC input set. One workload JSON
 # per input (software/spec2017/marshal-configs/spec17-intspeed-<input>-overhead.json); the
@@ -133,7 +136,7 @@ def results_dir() -> Path | None:
 
 def fpga(force: bool) -> Path:
     say("fpga")
-    step(f"run farm: {len(JOBS)} slots (the longest job, perlbench, takes about 80 s of guest time plus boot)")
+    step(f"run farm: {len(JOBS)} slots ({FARM_TIME[INPUT]} of wall-clock time)")
     r = results_dir()
     if r and not force:
         skip(r.name)

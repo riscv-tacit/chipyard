@@ -253,7 +253,7 @@ def analyse(results: Path, force: bool) -> None:
     uartlogs = [results / j.dir / "uartlog" for j in LATENCY_JOBS]
     log = log_for("analyse")
     jobs = [
-        ("control distribution", figs / "control_distribution.png",
+        ("control distribution", figs / "control_distribution.pdf",
          [paths.PY, ANALYSIS / "plot_distribution.py",
           "--input", results / LATENCY_JOBS[0].dir / "uartlog",
           "--out", figs / "control_distribution.png"]),
@@ -327,7 +327,7 @@ def report(results: Path) -> bool:
             print(f"  {j.dir}: guest did not report PASSED -- INVESTIGATE")
     print(f"\n  every job passed and every collection is complete: {'YES' if passed else 'NO'}")
     print(f"\n  everything this run produced is under {OUT} :")
-    print("    figures/control_distribution.png       launch latency distribution, control")
+    print("    figures/control_distribution.*         launch latency distribution, control")
     print("    figures/tracepoint_overhead_density.*  control vs diagnosis tracepoints (lite, full)")
     print("    figures/fix_ccdf.*                     tail of control vs the RCU SCHED_BATCH fix")
     print("    speedscope/<run>/*.speedscope.json     one launch per file: the slowest and a median one")

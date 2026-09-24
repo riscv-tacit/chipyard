@@ -124,7 +124,10 @@ def main():
     ax.legend(handles=handles, loc="upper left", bbox_to_anchor=(0.51, 1.03),
               frameon=False, labelcolor=INK, handlelength=1.8, labelspacing=0.2,
               borderpad=0.0, handletextpad=0.5)
-    fig.savefig(args.out)
+    stem = re.sub(r"\.(pdf|png)$", "", str(args.out))
+    fig.savefig(f"{stem}.pdf")
+    fig.savefig(f"{stem}.png", dpi=300)
+    print(f"wrote {stem}.pdf/.png")
     print("saved", args.out)
 
 

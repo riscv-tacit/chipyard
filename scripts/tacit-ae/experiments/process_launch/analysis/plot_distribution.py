@@ -89,7 +89,10 @@ def plot_distribution(input_file: str, out: str = None, bin_us: float = 5.0,
     for name, q, _, _c in STYLES:
         print(f'{input_file}: {stats[name]:.1f} {name}')
 
-    fig.savefig(out or f'{input_file}.png')
+    stem = re.sub(r"\.(pdf|png)$", "", str(out or f"{input_file}.png"))
+    fig.savefig(f"{stem}.pdf")
+    fig.savefig(f"{stem}.png", dpi=300)
+    print(f"wrote {stem}.pdf/.png")
 
 
 if __name__ == '__main__':

@@ -283,14 +283,13 @@ def analyse(force: bool) -> None:
                         if est in eps[bench][metric]:
                             w.writerow([bench, est, label, f"{eps[bench][metric][est]:.2f}"])
         ok(", ".join(name for _, name in tables))
-    step("figures: epsilon vs oracle, plain and stacked")
+    step("figure: epsilon vs oracle, TACIT's BB bar split into semantic and structural error")
     csvs = [OUT / name for _, name in tables]
-    if fresh(OUT / "eps_vs_oracle.pdf", *csvs) and fresh(OUT / "eps_vs_oracle_stacked.pdf", *csvs) and not force:
-        skip("eps_vs_oracle.pdf, eps_vs_oracle_stacked.pdf")
+    if fresh(OUT / "eps_vs_oracle_stacked.pdf", *csvs) and not force:
+        skip("eps_vs_oracle_stacked.pdf")
     else:
-        sh([paths.PY, ANALYSIS / "plot_eps.py", OUT], log_for("analyse"), cwd=OUT)
         sh([paths.PY, ANALYSIS / "plot_eps_stacked.py", OUT, OUT / "eps_bb_inst.csv"], log_for("analyse"), cwd=OUT)
-        ok("eps_vs_oracle.pdf, eps_vs_oracle_stacked.pdf")
+        ok("eps_vs_oracle_stacked.pdf")
 
 
 # ------------------------------------------------------------------------ report
@@ -315,8 +314,8 @@ def report() -> bool:
     print(f"\n  every benchmark decoded against both oracles with all four estimators: {'YES' if passed else 'NO -- INVESTIGATE'}")
     print(f"\n  everything this run produced is under {OUT} :")
     print("    eps_bb.csv, eps_func.csv               epsilon per (benchmark, estimator), long format; eps_bb_inst.csv the 1/n oracle")
-    print("    eps_vs_oracle.pdf/.png                 the figure: epsilon per benchmark and estimator")
-    print("    eps_vs_oracle_stacked.pdf/.png         the paper's figure: TACIT's BB bar split into semantic and structural error")
+    print("    eps_vs_oracle_stacked.pdf/.png         the figure: epsilon per benchmark and estimator, TACIT's BB bar")
+    print("                                           split into semantic (boundary oracle) and structural (1/n) error")
     print("    <benchmark>/bundle/                    trace, both oracles, binaries, dwarf, patch map; out/decode*.log")
     print("    logs/<step>[.<benchmark>].log          one transcript per step")
     return passed

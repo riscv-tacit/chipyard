@@ -2,14 +2,16 @@
 #
 # Entry point for the TACIT artifact-evaluation experiments.
 #
+#   ./run.sh all [--force]               every experiment: shared preparation, then all in parallel
 #   ./run.sh <experiment> [flags]        one experiment, all its steps, resuming past done ones
 #   ./run.sh lua_fusion --list           show the plan and exit
 #   ./run.sh lua_fusion --force          redo every step
-#   ./run.sh lua_fusion --narrow         decode without bb_pair_stats
+#   ./run.sh lua_fusion --to driver      host-only preparation; --from fpga for the rest
 #
 # Experiments live in experiments/<name>/<name>.py, each a self-contained linear
-# script over the common layer (paths, shell, uartlog, firesim). No argument means
-# lua_fusion.
+# script over the common layer (paths, shell, uartlog, firesim, steps). They share
+# the step contract in steps.py, which is what lets all.py drive them uniformly.
+# No argument means lua_fusion.
 #
 # This script exists only to set up the environment, which is the one thing that
 # cannot be done from Python: the four scripts below mutate the shell (PATH,
@@ -40,6 +42,10 @@ set -u
 # first argument names the experiment when it is not a flag
 EXP=lua_fusion
 if [ $# -gt 0 ] && [ "${1#-}" = "$1" ]; then EXP=$1; shift; fi
+if [ "$EXP" = all ]; then
+  cd "$AE"
+  exec "$CY/.conda-env/bin/python3" "$AE/all.py" "$@"
+fi
 SCRIPT="$AE/experiments/$EXP/$EXP.py"
 [ -f "$SCRIPT" ] || { echo "no experiment '$EXP'. Available: $(ls "$AE/experiments")" >&2; exit 1; }
 cd "$AE"

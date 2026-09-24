@@ -15,9 +15,11 @@ callback batching. One FireMarshal workload, seven jobs in one FireSim launch:
     ./run.sh process_launch                  everything, resuming past steps whose outputs exist
     ./run.sh process_launch --list           the plan, no work done
     ./run.sh process_launch --force          redo every step
-    ./run.sh process_launch --from analyse   redo this step and the ones after it
+    ./run.sh process_launch --from analyse --force   redo analysis and the report, keep the rest
+    ./run.sh process_launch --to driver      host-only preparation, stop before the run farm
 
-Steps, in order:  image -> fpga -> bundle -> decode -> analyse -> report
+Steps, in order:  image -> driver -> fpga -> bundle -> decode -> analyse -> report
+(the step contract shared by every experiment is in steps.py)
 """
 from __future__ import annotations
 
@@ -36,6 +38,7 @@ HERE = Path(__file__).resolve().parent            # experiments/process_launch/
 COMMON = HERE.parents[1]                          # bundle_run.py and the shared modules
 sys.path.insert(0, str(COMMON))
 import paths                                                          # noqa: E402
+import steps                                                          # noqa: E402
 from firesim import dump_from_rootfs, newest_results_dir              # noqa: E402
 from shell import (StageFailed, die, duration, have, ok, say, sh, skip,  # noqa: E402
                    step, warn)
@@ -128,6 +131,17 @@ def image(force: bool) -> None:
         ok()
     step("firemarshal install")
     sh(["./marshal", "install", WORKLOAD_JSON], log, cwd=paths.FM)
+    ok()
+
+
+# ------------------------------------------------------------------------ driver
+def driver(force: bool) -> None:
+    """Build the FireSim host driver for the bitstream, without a run farm. infrasetup
+    would do it, but building it here keeps the run phase free of host-side builds --
+    two experiments' infrasetups would otherwise race on the same make tree."""
+    say("driver")
+    step("firesim builddriver")
+    sh(MANAGER + ["builddriver"], log_for("driver"), cwd=paths.FS / "deploy")
     ok()
 
 
@@ -326,7 +340,7 @@ def report(results: Path) -> bool:
 
 
 # -------------------------------------------------------------------------- main
-STEPS = ("image", "fpga", "bundle", "decode", "analyse")
+STEPS = ('image', 'driver', 'fpga', 'bundle', 'decode', 'analyse')
 
 
 def preflight() -> None:
@@ -347,10 +361,7 @@ def preflight() -> None:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--force", action="store_true", help="redo steps whose outputs exist")
-    ap.add_argument("--from", dest="from_step", choices=STEPS, metavar="STEP",
-                    help=f"redo this step and the ones after it: {', '.join(STEPS)}")
-    ap.add_argument("--list", action="store_true", help="show the plan and exit")
+    steps.add_args(ap, STEPS)
     args = ap.parse_args(argv)
     if args.list:
         print(f"workload : {WORKLOAD_JSON}\nslots    : {len(ALL_JOBS)} (one per job)")
@@ -358,18 +369,25 @@ def main(argv=None) -> int:
         for j in ALL_JOBS:
             print(f"  {j.name:16} {j.label}")
         return 0
-    at = STEPS.index(args.from_step) if args.from_step else len(STEPS)
-    redo = {s: args.force or i >= at for i, s in enumerate(STEPS)}
+    do = steps.plan(STEPS, args)          # step -> None (do not run), False (if needed), True (redo)
     started = time.monotonic()
+    stopped = f"\n  stopped after {args.to_step}; total elapsed: "
     try:
         preflight()
-        image(redo["image"])
-        results = fpga(redo["fpga"])
-        bundle(results, redo["bundle"])
-        decode(redo["decode"])
-        analyse(results, redo["analyse"])
+        if do["image"] is not None: image(do["image"])
+        if do["driver"] is not None: driver(do["driver"])
+        if do["fpga"] is None:
+            print(stopped + duration(time.monotonic() - started))
+            return 0
+        results = fpga(do["fpga"])
+        if do["bundle"] is not None: bundle(results, do["bundle"])
+        if do["decode"] is not None: decode(do["decode"])
+        if do["analyse"] is not None: analyse(results, do["analyse"])
     except StageFailed as e:
         die(e)
+    if not steps.reports(STEPS, args):
+        print(stopped + duration(time.monotonic() - started))
+        return 0
     passed = report(results)
     print(f"\n  total elapsed: {duration(time.monotonic() - started)}")
     return 0 if passed else 1

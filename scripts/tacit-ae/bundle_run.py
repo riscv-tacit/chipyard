@@ -14,7 +14,7 @@ Layout:
     config.json            decoder config, paths relative to bundle root
     manifest.json          source paths, git SHAs, timestamps
     uartlog
-    trace/tacit0.out
+    trace/tacit<N>.out     every per-hart trace in the results dir
     oracle/bboracle*.csv[.zst] bbtrace.txt ...
     binaries/machine-bin binaries/kernel-dwarf     (linux runs)
     binaries/drivers/<name>-dwarf                  (linux runs)
@@ -24,7 +24,10 @@ Layout:
 
 Usage:
   bundle_run.py --results RESULTS_JOB_DIR --template TEMPLATE_JSON --out BUNDLE
-                [--app ELF]... [--image FIREMARSHAL_IMAGE_DIR] [--tar]
+                [--app ELF]... [--image FIREMARSHAL_IMAGE_DIR] [--trace tacitN.out] [--tar]
+
+A multi-core run leaves one trace per hart (tacit0.out, tacit1.out, ...). All of them
+are bundled; config.json decodes the lowest-numbered one unless --trace names another.
 
 Linux mode (--image given): machine_binary/kernel_binary point at the
 image's own -bin/-bin-dwarf, tuples are built from the image's per-driver
@@ -49,6 +52,8 @@ MODULES_RX = re.compile(
 # trace-submit drains the driver's task log and prints one line per traced
 # task; comm is the kernel task name (binary basename truncated to 15 chars)
 ASID_RX = re.compile(r"tacit: asid=(\d+) pid=\d+ comm=(\S+)")
+# one encoded trace per traced hart, named by the FireSim bridge index (= hart id)
+TRACE_RX = re.compile(r"tacit(\d+)\.out")
 
 
 def die(msg):
@@ -148,7 +153,7 @@ def place(src: Path, dst: Path) -> None:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--results", required=True, type=Path,
-                    help="per-job results dir (contains tacit0.out, uartlog)")
+                    help="per-job results dir (contains tacit<N>.out, uartlog)")
     ap.add_argument("--template", required=True, type=Path,
                     help="decoder config template (analytical intent only)")
     ap.add_argument("--out", required=True, type=Path, help="bundle dir")
@@ -161,6 +166,9 @@ def main():
                     help="jump-label patch map when the job itself did not "
                          "capture one (e.g. produced by a chores job in the "
                          "same deterministic boot)")
+    ap.add_argument("--trace", default=None,
+                    help="which trace config.json decodes (e.g. tacit1.out); "
+                         "default: the lowest-numbered tacit<N>.out")
     ap.add_argument("--tar", action="store_true",
                     help="also produce <out>.tar.zst")
     args = ap.parse_args()
@@ -171,15 +179,20 @@ def main():
     if out.exists() and any(out.iterdir()):
         die(f"bundle dir {out} exists and is not empty")
     template = json.loads(args.template.read_text())
+    traces = sorted((p for p in res.glob("tacit*.out") if TRACE_RX.fullmatch(p.name)),
+                    key=lambda p: int(TRACE_RX.fullmatch(p.name).group(1)))
+    if not traces:
+        die(f"no tacit<N>.out in {res}")
+    decoded = args.trace or traces[0].name
+    if decoded not in {t.name for t in traces}:
+        die(f"--trace {decoded} not in {res} ({[t.name for t in traces]})")
 
     for sub in ["trace", "oracle", "binaries/app", "provenance", "out"]:
         (out / sub).mkdir(parents=True, exist_ok=True)
 
     # --- results dir contents ---
-    trace = res / "tacit0.out"
-    if not trace.exists():
-        die(f"{trace} not found")
-    place(trace, out / "trace/tacit0.out")
+    for t in traces:
+        place(t, out / "trace" / t.name)
 
     uartlog = res / "uartlog"
     if not uartlog.exists():
@@ -218,7 +231,7 @@ def main():
 
     # --- config: template carries intent, we wire provenance ---
     cfg = dict(template)
-    cfg["encoded_trace"] = "trace/tacit0.out"
+    cfg["encoded_trace"] = f"trace/{decoded}"
 
     apps = []
     for app in args.app:
@@ -331,6 +344,8 @@ def main():
         "image_dir": str(args.image.resolve()) if args.image else None,
         "template": str(args.template.resolve()),
         "apps": [str(a.resolve()) for a in args.app],
+        "traces": [t.name for t in traces],
+        "decoded_trace": decoded,
         "oracle_files": oracle_files,
         "git": {name: git_info(p) for name, p in {
             "tacit-chipyard": top,

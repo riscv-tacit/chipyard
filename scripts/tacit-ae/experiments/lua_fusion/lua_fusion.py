@@ -36,7 +36,7 @@ HERE = Path(__file__).resolve().parent            # experiments/lua_fusion/
 sys.path.insert(0, str(HERE.parents[1]))        # the common layer: paths, shell, uartlog, firesim
 import paths                                                          # noqa: E402
 import steps                                                          # noqa: E402
-from firesim import dump_from_rootfs, newest_results_dir, verify_in_rootfs  # noqa: E402
+from firesim import exclusive, dump_from_rootfs, newest_results_dir, verify_in_rootfs  # noqa: E402
 from shell import (StageFailed, die, duration, have, md5, ok, out, say, sh,  # noqa: E402
                    skip, step, warn)
 from uartlog import parse as parse_uartlog                            # noqa: E402
@@ -262,7 +262,8 @@ def fpga(force: bool) -> Path:
     log = log_for("fpga")
     deploy = paths.FS / "deploy"
     sh(MANAGER + ["launchrunfarm"], log, cwd=deploy)
-    sh(MANAGER + ["infrasetup"], log, cwd=deploy)
+    with exclusive("infrasetup"):     # one at a time across experiments: shared driver bundle
+        sh(MANAGER + ["infrasetup"], log, cwd=deploy)
     sh(MANAGER + ["runworkload"], log, cwd=deploy)
     r = results_dir()
     if r is None:

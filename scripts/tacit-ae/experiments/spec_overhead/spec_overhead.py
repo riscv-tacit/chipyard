@@ -28,7 +28,7 @@ sys.path.insert(0, str(COMMON))
 import paths                                                          # noqa: E402
 import spec                                                           # noqa: E402
 import steps                                                          # noqa: E402
-from firesim import newest_results_dir                                # noqa: E402
+from firesim import exclusive, newest_results_dir                                # noqa: E402
 from shell import (StageFailed, die, duration, have, ok, say, sh, skip,  # noqa: E402
                    step)
 
@@ -123,7 +123,8 @@ def fpga(force: bool) -> Path:
     log = log_for("fpga")
     deploy = paths.FS / "deploy"
     sh(MANAGER + ["launchrunfarm"], log, cwd=deploy)
-    sh(MANAGER + ["infrasetup"], log, cwd=deploy)
+    with exclusive("infrasetup"):     # one at a time across experiments: shared driver bundle
+        sh(MANAGER + ["infrasetup"], log, cwd=deploy)
     sh(MANAGER + ["runworkload"], log, cwd=deploy)
     r = results_dir()
     if r is None:

@@ -7,6 +7,8 @@ both fail silently in shell.
 """
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import subprocess
 import tempfile
 from pathlib import Path
@@ -109,3 +111,23 @@ def newest_results_dir(suffix: str, root: Path | None = None) -> Path:
 if __name__ == "__main__":
     import sys
     print(newest_results_dir(sys.argv[1] if len(sys.argv) > 1 else "lua-fuse-mmadd"))
+
+
+@contextlib.contextmanager
+def exclusive(name: str):
+    """Serialise a host-side manager step across experiments running at the same time.
+
+    `firesim infrasetup` repacks the driver bundle for the hardware config into one shared
+    file under sims/firesim and copies it to the run hosts; six experiments on the same
+    bitstream doing that at once copied each other's half-written tarballs (tar exit 2 on
+    every host, 2026-09-24). The lock lives under out/, so every experiment on this host
+    contends for the same file, and it is released when the block ends or the process dies.
+    """
+    lock = paths.OUT_ROOT / f".{name}.lock"
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    with open(lock, "w") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)

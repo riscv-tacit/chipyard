@@ -1,0 +1,10 @@
+{
+  "encoded_trace": "",
+  "user_binaries": [ { "binary": "", "asids": [] } ],
+  "machine_binary": "",
+  "kernel_binary": "",
+  "kernel_jump_label_patch_log": "required",
+  "driver_binary_entry_tuples": [],
+  "receivers": { "prv_breakdown": { "enabled": true } },
+  "emulations": []
+}

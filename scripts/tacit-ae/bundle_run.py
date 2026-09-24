@@ -35,6 +35,7 @@ dwarf snapshots with addresses from the uartlog. Baremetal mode: the first
 import argparse
 import json
 import re
+import os
 import shutil
 import subprocess
 import sys
@@ -133,6 +134,17 @@ def git_info(path):
     return {"sha": sha, "dirty": bool(run("status", "--porcelain"))}
 
 
+def place(src: Path, dst: Path) -> None:
+    """Put a capture file into the bundle: a hard link when the bundle sits on the same
+    filesystem as the results directory (the oracle files run to 8-12 GB each; copying
+    eleven captures filled a 1 TB disk), a copy otherwise. Either way the bundle stays
+    valid if the results directory is deleted later."""
+    try:
+        os.link(src, dst)
+    except OSError:
+        shutil.copy2(src, dst)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--results", required=True, type=Path,
@@ -167,7 +179,7 @@ def main():
     trace = res / "tacit0.out"
     if not trace.exists():
         die(f"{trace} not found")
-    shutil.copy2(trace, out / "trace/tacit0.out")
+    place(trace, out / "trace/tacit0.out")
 
     uartlog = res / "uartlog"
     if not uartlog.exists():
@@ -177,7 +189,7 @@ def main():
     oracle_files = []
     for pat in ORACLE_GLOBS:
         for f in sorted(res.glob(pat)):
-            shutil.copy2(f, out / "oracle" / f.name)
+            place(f, out / "oracle" / f.name)
             oracle_files.append(f.name)
     if not oracle_files:
         print("bundle_run: WARNING: no oracle outputs found in results dir")

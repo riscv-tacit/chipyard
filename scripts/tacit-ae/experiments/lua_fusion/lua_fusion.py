@@ -10,9 +10,11 @@ captures are then bundled, decoded in parallel, analysed, and compared.
     ./run.sh lua_fusion --list       the plan, no work done
     ./run.sh lua_fusion --force      redo every step
     ./run.sh lua_fusion --narrow     decode without bb_pair_stats (faster, less memory)
-    ./run.sh lua_fusion --from analyse   redo this step and the ones after it, keep the rest
+    ./run.sh lua_fusion --from analyse --force   redo analysis and the report, keep the rest
+    ./run.sh lua_fusion --to driver      host-only preparation, stop before the run farm
 
-Steps, in order:  build -> image -> fpga -> bundle -> decode -> analyse -> report
+Steps, in order:  build -> image -> driver -> fpga -> bundle -> decode -> analyse -> report
+(the step contract shared by every experiment is in steps.py)
 Each step checks for its own outputs first, so a failure late in the pipeline does
 not cost an FPGA run.
 """
@@ -33,6 +35,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent            # experiments/lua_fusion/
 sys.path.insert(0, str(HERE.parents[1]))        # the common layer: paths, shell, uartlog, firesim
 import paths                                                          # noqa: E402
+import steps                                                          # noqa: E402
 from firesim import dump_from_rootfs, newest_results_dir, verify_in_rootfs  # noqa: E402
 from shell import (StageFailed, die, duration, have, md5, ok, out, say, sh,  # noqa: E402
                    skip, step, warn)
@@ -76,6 +79,7 @@ class Arm:
     table_label: str   # long, for the results table
     edit: str          # the provenance claim: what changed from baseline
     guards: tuple      # opcodes given a guard; () is the baseline
+    decode: bool = True  # False: run it for its runtime only (no capture, bundle or decode)
 
     @property
     def tree_dir(self) -> Path: return LUA_DISPATCH / self.tree
@@ -107,7 +111,16 @@ ARMS = (
     Arm("mmadd", "lua-fuse-mulmul-muladd", "optab_mmadd.json", "+MUL→ADD",
         "2 guards MUL->MUL,MUL->ADD",
         "lvm.c:1478  vmbreak -> vmbreak_fused2(OP_MUL, OP_ADD)", ("OP_MUL", "OP_ADD")),
+    # The control for the profile itself. Ranking edges by the whole handler span puts
+    # LEI->MUL among the top few; ranking by the entry block says its arrival is already
+    # predicted. This arm guards LEI->MUL and is run for its runtime alone: if the entry
+    # block is right, the guard buys nothing (fig.span_vs_entry.pdf shows the two rankings).
+    Arm("leimul", "lua-fuse-leimul", "optab_leimul.json", "+LEI→MUL (span-ranked)",
+        "1 guard  LEI->MUL, runtime only",
+        "lvm.c  OP_LEI vmbreak -> vmbreak_fused(OP_MUL)", ("OP_MUL",), decode=False),
 )
+DECODED = tuple(a for a in ARMS if a.decode)   # the arms whose captures are bundled and decoded
+BASE = ARMS[0]
 
 
 def outdir(*parts) -> Path:
@@ -215,6 +228,17 @@ def image(force: bool) -> None:
     ok()
 
 
+# ------------------------------------------------------------------------ driver
+def driver(force: bool) -> None:
+    """Build the FireSim host driver for the bitstream, without a run farm. infrasetup
+    would do it, but building it here keeps the run phase free of host-side builds --
+    two experiments' infrasetups would otherwise race on the same make tree."""
+    say("driver")
+    step("firesim builddriver")
+    sh(MANAGER + ["builddriver"], log_for("driver"), cwd=paths.FS / "deploy")
+    ok()
+
+
 # -------------------------------------------------------------------------- fpga
 def results_dir() -> Path | None:
     """The newest complete run of the workload: every traced job and the chores job."""
@@ -252,7 +276,7 @@ def bundle(results: Path, force: bool, narrow: bool) -> None:
     """Package each capture so it decodes identically later, on any machine."""
     say("bundle")
     template = CONFIGS / ("decode_narrow.json" if narrow else "decode_full.json")
-    for a in ARMS:
+    for a in DECODED:
         step(f"bundle capture: {a.name}")
         if (a.bundle / "config.json").exists() and not force:
             skip(dirsize(a.bundle))
@@ -281,9 +305,9 @@ def bundle(results: Path, force: bool, narrow: bool) -> None:
 def decode(force: bool) -> None:
     """Turn each packet stream into per-block statistics, as many at once as memory allows."""
     say("decode")
-    todo = [a for a in ARMS
+    todo = [a for a in DECODED
             if force or not fresh(a.bundle / "out" / "lua.bb_stats.csv", a.bundle / "config.json")]
-    done = [a for a in ARMS if a not in todo]
+    done = [a for a in DECODED if a not in todo]
     for a in done:
         step(f"decode: {a.name}")
         skip("already decoded")
@@ -314,6 +338,31 @@ def decode(force: bool) -> None:
         f"{a.name} {sum(1 for _ in open(a.bundle / 'out' / 'lua.bb_stats.csv')) - 1:,}"
         for a in todo)
     ok(f"blocks: {blocks}  {duration(time.monotonic() - t0)}")
+    decode_span(force)
+
+
+def decode_span(force: bool) -> None:
+    """A second, narrow decode of the baseline capture with the dispatch_stats receiver
+    timing the WHOLE handler (entry to the next handler's entry) instead of the entry
+    block: the other half of the span-vs-entry comparison. Same capture, same handler
+    table, one receiver option changed; the decoder allows one dispatch_stats receiver
+    per run, hence the second pass."""
+    step("decode: base, handler-span unit")
+    cfg_in, cfg_out = BASE.bundle / "config.json", BASE.bundle / "config_span.json"
+    out_csv = BASE.bundle / "out-span" / "lua.dispatch_stats.csv"
+    if fresh(out_csv, cfg_in) and not force:
+        return skip("already decoded")
+    c = json.loads(cfg_in.read_text())
+    ds = dict(c["receivers"]["dispatch_stats"])
+    ds.update({"span": "handler", "path": "out-span/lua.dispatch_stats.csv",
+               "hist_path": "out-span/lua.dispatch_hist.csv"})
+    c["receivers"] = {"prv_breakdown": {"enabled": True}, "dispatch_stats": ds}
+    c["emulations"] = []
+    cfg_out.write_text(json.dumps(c, indent=2) + "\n")
+    (BASE.bundle / "out-span").mkdir(exist_ok=True)
+    t0 = time.monotonic()
+    sh([paths.DECODER, "--config", "config_span.json"], log_for("decode.base.span"), cwd=BASE.bundle)
+    ok(duration(time.monotonic() - t0))
 
 
 def _available_gb() -> int:
@@ -328,7 +377,7 @@ def _available_gb() -> int:
 def analyse(force: bool) -> None:
     """Rank blocks by variance-weighted cost and draw each arm's own figures."""
     say("analyse")
-    for a in ARMS:
+    for a in DECODED:
         step(f"analysis flow: {a.name}")
         tables = a.bundle / "out" / "lua"          # the decoder's lua.<report>.csv, as a prefix
         if fresh(a.out / f"vbb.{BENCH}.txt", a.bundle / "out" / "lua.bb_stats.csv") and not force:
@@ -338,6 +387,21 @@ def analyse(force: bool) -> None:
         sh([ANALYSIS / "flow.sh", a.optab_path, tables, f"{window / 1e9:.6f}", a.out],
            log_for(f"analyse.{a.name}"))          # window in Gcycles
         ok(str(a.out))
+    step("entry block vs handler span (baseline, MUL)")
+    entry_h, span_h = BASE.bundle / "out" / "lua.dispatch_hist.csv", BASE.bundle / "out-span" / "lua.dispatch_hist.csv"
+    if fresh(OUT / "fig.unit_mul.pdf", entry_h, span_h) and not force:
+        return skip("fig.unit_mul.pdf")
+    sh([paths.PY, ANALYSIS / "plot_smear_effects.py", "unit", "--optab", BASE.optab_path, "--target", "MUL",
+        "--entry-hist", entry_h, "--span-hist", span_h, "--xmax-entry", "22", "--xmax-span", "36",
+        "--out", OUT / "fig.unit_mul"], log_for("analyse.unit_mul"))
+    # the same comparison as a ranking of every hot edge, for the log
+    window = parse_uartlog(BASE.bundle / "uartlog").window_cycles
+    sh([paths.PY, ANALYSIS / "plot_span_vs_entry.py", "--optab", BASE.optab_path,
+        "--entry", BASE.bundle / "out" / "lua.dispatch_stats.csv",
+        "--span", BASE.bundle / "out-span" / "lua.dispatch_stats.csv",
+        "--window", f"{window / 1e9:.6f}", "--out", OUT / "logs" / "span_vs_entry"],
+       log_for("analyse.unit_mul"))
+    ok("fig.unit_mul.pdf  (edge ranking table in logs/analyse.unit_mul.log)")
 
 
 # ------------------------------------------------------------------------ report
@@ -349,6 +413,7 @@ ENTRY_TOLERANCE = 1e-4                   # handler-entry counts must agree this 
 @dataclass
 class Row:
     arm: Arm
+    src: Path          # where its uartlog lives: the bundle, or the job's results dir
     window: int
     total: int
     checksum: str
@@ -358,10 +423,11 @@ class Row:
     guard_sites: list
 
 
-def collect() -> list[Row]:
+def collect(results: Path) -> list[Row]:
     rows = []
     for a in ARMS:
-        uartlog = a.bundle / "uartlog"
+        src = a.bundle if a.decode else results / a.job
+        uartlog = src / "uartlog"
         if not uartlog.exists():
             continue
         log = parse_uartlog(uartlog)
@@ -379,7 +445,7 @@ def collect() -> list[Row]:
                     (r["site_pc"].strip(), r["site_kind"].strip(), r["to_handler"].strip())
                     for r in csv.DictReader(f, skipinitialspace=True)
                     if r["site_kind"].strip() != "jr" and int(r["count"]) >= MIN_GUARD_TRAFFIC})
-        rows.append(Row(a, log.window_cycles or 0, log.total_cycles or 0,
+        rows.append(Row(a, src, log.window_cycles or 0, log.total_cycles or 0,
                         log.search(CHECKSUM) or "?", log.stall_cycles,
                         entries, fallthrough, guard_sites))
     return rows
@@ -390,14 +456,14 @@ def figures(rows: list[Row]) -> None:
     step("runtime figure")
     try:
         sh([paths.PY, ANALYSIS / "plot_runtime_bars.py", "--out", OUT / "fig.runtime",
-            *[f"{r.arm.label}={r.arm.bundle}" for r in rows]], log)
+            *[f"{r.arm.label}={r.src}" for r in rows]], log)
         ok(str(OUT / "fig.runtime.pdf"))
     except Exception:
         warn(f"see {log}")
     # The grid needs each arm's own optab: handlers move between builds, so an
     # address means nothing without the build that produced it.
     step("per-predecessor grid")
-    hists = [(r, r.arm.bundle / "out" / "lua.dispatch_hist.csv") for r in rows]
+    hists = [(r, r.arm.bundle / "out" / "lua.dispatch_hist.csv") for r in rows if r.arm.decode]
     if not all(h.exists() for _, h in hists):
         return warn("needs the decode step for every arm")
     try:
@@ -445,17 +511,19 @@ def canaries(rows: list[Row]) -> bool:
     return all_ok
 
 
-def report() -> bool:
+def report(results: Path) -> bool:
     say("results")
-    rows = collect()
+    rows = collect(results)
     if len(rows) < len(ARMS):
-        print(f"  only {len(rows)} of {len(ARMS)} bundles present -- run the fpga and bundle steps first")
+        print(f"  only {len(rows)} of {len(ARMS)} arms have a uartlog -- run the fpga and bundle steps first")
         return False
     figures(rows)
     results_table(rows)
     passed = canaries(rows)
     print(f"\n  everything this run produced is under {OUT} :")
     print("    fig.runtime.pdf, fig.pred_grid.pdf     across-arm figures")
+    print("    fig.unit_mul.pdf                       MUL's arrivals by predecessor: entry block vs whole handler span")
+    print("                                           (after-LEI sits on the floor in (a), off it in (b); the leimul arm tests it)")
     print("    <arm>/vbb.mandelbrot.txt               blocks ranked by variance-weighted cost")
     print("    <arm>/fig.bb_distributions.pdf         per-block latency distributions")
     print("    <arm>/bundle/                          the capture: trace, binaries, dwarf,")
@@ -469,7 +537,7 @@ def report() -> bool:
 
 
 # -------------------------------------------------------------------------- main
-STEPS = ("build", "image", "fpga", "bundle", "decode", "analyse")
+STEPS = ('build', 'image', 'driver', 'fpga', 'bundle', 'decode', 'analyse')
 
 
 def preflight() -> None:
@@ -491,33 +559,36 @@ def preflight() -> None:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--force", action="store_true", help="redo steps whose outputs exist")
+    steps.add_args(ap, STEPS)
     ap.add_argument("--narrow", action="store_true", help="skip bb_pair_stats: less time and memory")
-    ap.add_argument("--from", dest="from_step", choices=STEPS, metavar="STEP",
-                    help=f"redo this step and the ones after it: {', '.join(STEPS)}")
-    ap.add_argument("--list", action="store_true", help="show the plan and exit")
     args = ap.parse_args(argv)
-    # --force applies to every step; --from STEP to that step and the later ones
-    at = STEPS.index(args.from_step) if args.from_step else len(STEPS)
-    redo = {s: args.force or i >= at for i, s in enumerate(STEPS)}
     if args.list:
-        print(f"workload : {WORKLOAD_JSON}\nslots    : {len(ARMS) + 1} (one per traced arm + chores)")
-        print(f"steps    : build, image, fpga, bundle, decode, analyse, report\nout      : {OUT}\n")
+        print(f"workload : {WORKLOAD_JSON}\nslots    : {len(ARMS) + 1} (one per arm + chores; {len(DECODED)} arms decoded)")
+        print(f"steps    : {', '.join(STEPS)}, report\nout      : {OUT}\n")
         for a in ARMS:
             print(f"  {a.name:8} {a.tree:24} {a.edit}")
         return 0
+    do = steps.plan(STEPS, args)          # step -> None (do not run), False (if needed), True (redo)
     started = time.monotonic()
+    stopped = f"\n  stopped after {args.to_step}; total elapsed: "
     try:
         preflight()
-        build(redo["build"])
-        image(redo["image"])
-        results = fpga(redo["fpga"])
-        bundle(results, redo["bundle"], args.narrow)
-        decode(redo["decode"])
-        analyse(redo["analyse"])
+        if do["build"] is not None: build(do["build"])
+        if do["image"] is not None: image(do["image"])
+        if do["driver"] is not None: driver(do["driver"])
+        if do["fpga"] is None:
+            print(stopped + duration(time.monotonic() - started))
+            return 0
+        results = fpga(do["fpga"])
+        if do["bundle"] is not None: bundle(results, do["bundle"], args.narrow)
+        if do["decode"] is not None: decode(do["decode"])
+        if do["analyse"] is not None: analyse(do["analyse"])
     except StageFailed as e:
         die(e)
-    passed = report()
+    if not steps.reports(STEPS, args):
+        print(stopped + duration(time.monotonic() - started))
+        return 0
+    passed = report(results)
     print(f"\n  total elapsed: {duration(time.monotonic() - started)}")
     return 0 if passed else 1
 

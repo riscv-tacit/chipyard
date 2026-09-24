@@ -59,7 +59,8 @@ questions, three launches. SPEC is licensed: the `image` step compiles the bench
 reviewer's own installation, pointed to by `$SPEC_DIR`, into a FireMarshal overlay
 (`software/spec2017/speckle/gen_binaries.sh`, an hour or so the first time per input set);
 nothing SPEC-derived is in the repository. The three run on distinct run farms
-(`tacit-ae-spec-overhead`, `-lossy`, `-oracle`) once their images and driver exist.
+(`tacit-ae-spec-overhead-<input>`, `tacit-ae-spec-lossy-<input>`, `tacit-ae-spec-oracle`) once their
+images and driver exist; the per-input tag lets a ref run share the farm with a train run.
 
 | experiment | input | slots | measures |
 | --- | --- | --- | --- |
@@ -88,7 +89,8 @@ longer than the test inputs do.
 
 The workloads are `software/spec2017/marshal-configs/spec17-intspeed-{test,train,ref}-overhead.json` and `-{test,train,ref}-lossy-full.json` (whole-run lossy; the `train-lossy` one without `-full` is an older windowed measurement) and `spec17-intspeed-ref-oracle.json`;
 the runtime configs `sims/firesim/deploy/tacit-runtime/spec-{overhead,lossy,oracle}.yaml`
-(the oracle one carries the TraceDoctor `plusarg_passthrough`). `spec_oracle` needs the decoder
+(the oracle one carries the TraceDoctor `plusarg_passthrough`; the overhead and lossy ones are
+templates from which the scripts derive a `config_spec-<x>-<input>.yaml` per input). `spec_oracle` needs the decoder
 and about 2.5 GB per decode; it decodes as many captures in parallel as the host has cores for.
 
 ## Quick start

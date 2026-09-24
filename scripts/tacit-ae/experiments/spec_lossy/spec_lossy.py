@@ -17,6 +17,7 @@ Steps, in order:  image -> driver -> fpga -> analyse -> report
 from __future__ import annotations
 
 import argparse
+import re
 import csv
 import sys
 import time
@@ -38,7 +39,7 @@ DEFAULT_INPUT = "train"      # what `./run.sh all` runs; the paper's lossy numbe
 
 # Set by configure(): everything that depends on the SPEC input set. One workload JSON
 # per input (software/spec2017/marshal-configs/spec17-intspeed-<input>-lossy.json); the
-# runtime config is shared and the manager is told which workload with -x. "-full" is the
+# runtime config is derived per input from the tracked one (see runtime_config). "-full" is the
 # whole-run measurement (spec17-intspeed-train-lossy, without it, is an older windowed one).
 INPUT = DEFAULT_INPUT
 OUT = paths.OUT_ROOT / "spec_lossy" / INPUT
@@ -48,16 +49,33 @@ MANAGER: list[str] = []
 JOBS: list[str] = []
 
 
+RUNTIME_TEMPLATE = paths.FS / "deploy" / "tacit-runtime" / "spec-lossy.yaml"
+
+
+def runtime_config(inp: str) -> str:
+    """The manager config for one input set, derived from the tracked spec-lossy.yaml: the
+    workload for that input and a run farm tag suffixed with it, so two inputs can be on
+    the farm at the same time (FireSim scopes a farm, and terminates it, by tag). Written
+    beside the template as config_spec-lossy-<input>.yaml: FireSim's deploy/.gitignore drops
+    config_*.yaml at any depth, so the generated file never shows up in git."""
+    name = f"config_spec-lossy-{inp}.yaml"
+    text = RUNTIME_TEMPLATE.read_text()
+    text, n_tag = re.subn(r"^(\s*run_farm_tag:\s*)\S+", rf"\g<1>tacit-ae-spec-lossy-{inp}", text, flags=re.M)
+    text, n_wl = re.subn(r"^(\s*workload_name:\s*)\S+", rf"\g<1>spec17-intspeed-{inp}-lossy-full.json", text, flags=re.M)
+    assert n_tag == 1 and n_wl == 1, f"{RUNTIME_TEMPLATE}: expected one run_farm_tag and one workload_name"
+    (RUNTIME_TEMPLATE.parent / name).write_text(text)
+    return name
+
+
 def configure(inp: str) -> None:
     global INPUT, OUT, WORKLOAD, WORKLOAD_JSON, MANAGER, JOBS
     INPUT = inp
     OUT = paths.OUT_ROOT / "spec_lossy" / inp
     WORKLOAD = f"spec17-intspeed-{inp}-lossy-full"
     WORKLOAD_JSON = paths.SOFTWARE / "spec2017" / "marshal-configs" / f"{WORKLOAD}.json"
-    MANAGER = ["firesim", "-c", "tacit-runtime/spec-lossy.yaml",
+    MANAGER = ["firesim", "-c", f"tacit-runtime/{runtime_config(inp)}",
                "-a", "tacit-runtime/tacit-ae-hwdb.yaml",
-               "-r", "tacit-runtime/tacit-ae-build-recipes.yaml",
-               "-x", f"workload workload_name {WORKLOAD}.json"]
+               "-r", "tacit-runtime/tacit-ae-build-recipes.yaml"]
     JOBS = [f"{WORKLOAD}-{b.name}" for b in spec.BENCHMARKS]
 
 
@@ -202,7 +220,7 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
     configure(args.input)
     if args.list:
-        print(f"input    : {INPUT}\nworkload : {WORKLOAD_JSON}\nslots    : {len(JOBS)} (one lossy traced run per benchmark)")
+        print(f"input    : {INPUT}\nfarm tag : tacit-ae-spec-lossy-{INPUT}\nworkload : {WORKLOAD_JSON}\nslots    : {len(JOBS)} (one lossy traced run per benchmark)")
         print(f"steps    : {', '.join(STEPS)}, report\nout      : {OUT}\n")
         for b in spec.BENCHMARKS:
             print(f"  {b.name:24} ./intspeed.sh {b.dir} --threads 1{b.args} --trace --dma --lossy")

@@ -500,6 +500,15 @@ class FireSimMegaBoomV3TacitSRAMQueueDepth128TraceDoctorConfig extends Config(
   new chipyard.WithBoomTraceDoctor(512) ++
   new chipyard.TacitMegaBoomV3SRAMQueueDepth128Config)
 
+// Dual-core version of the depth-64 design for the IPI-storm case study: two MegaBooms,
+// two encoders, one Tacit bridge per core, no TraceDoctor (nothing to cross-check, and
+// two MegaBooms already fill most of the F2 part).
+class FireSimDualMegaBoomV3TacitSRAMQueueDepth64Config extends Config(
+  new WithTacitBridge ++
+  new WithDefaultFireSimBridges ++
+  new WithFireSimConfigTweaks ++
+  new chipyard.TacitDualMegaBoomV3SRAMQueueDepth64Config)
+
 // Retry alias for the depth-32 build. Identical hardware -- it is a subclass, so
 // the Config composition is the same -- but a distinct TARGET_CONFIG string gives
 // it its own build quintuplet, hence its own local staging directory and its own

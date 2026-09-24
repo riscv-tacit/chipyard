@@ -98,7 +98,8 @@ def run_all_tmux(names: list[str], force: bool) -> dict[str, int]:
     inherited), tees the console into out/<experiment>/logs/run.log, writes its exit
     status to run.rc, and then stays open for reading until Enter is pressed."""
     session = SESSION
-    if subprocess.run(["tmux", "has-session", "-t", session], capture_output=True).returncode == 0:
+    # "=" makes the match exact: a bare name also matches any session it is a prefix of
+    if subprocess.run(["tmux", "has-session", "-t", f"={session}"], capture_output=True).returncode == 0:
         session = f"{SESSION}-{time.strftime('%H%M%S')}"     # an older session is still around
     say(f"run (parallel, in tmux session '{session}': {', '.join(names)})")
     rcs: dict[str, Path] = {}

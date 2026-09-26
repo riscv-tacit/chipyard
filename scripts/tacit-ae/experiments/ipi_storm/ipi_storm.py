@@ -69,10 +69,7 @@ MANAGER = ["firesim", "-c", "tacit-runtime/ipi-storm.yaml",
 BOOT_HART = re.compile(r"Boot HART ID\s*:\s*(\d+)")
 STALLS = re.compile(r"^stall count: (\d+) (\d+)", re.M)
 FLIPS = 200                  # hello.c: CHANGE_ITER = 100 iterations, two mprotect calls each
-MIN_INVOCATIONS = 190        # one TLB-flush IPI per flip; 201 measured 2026-09-24
-# the 2026-09-24 reference run on control_f2_dualmegaboom_tacit_pcim_sramq_d64_trapprv
-REFERENCE = {"invocations": 201, "cycles_per_inv": 1163.0, "top4": 41.3, "top12": 77.1,
-             "post_exit": (17.5, 47.9, 15.5), "post_exit_steady": 6.4}
+MIN_INVOCATIONS = 190        # one TLB-flush IPI per flip, plus a few unrelated ones
 
 
 def outdir(*parts) -> Path:
@@ -279,17 +276,16 @@ def report(results: Path) -> bool:
     print(f"  reader's trace          {cfg['encoded_trace']}  (Linux CPU 0 = boot hart {boot_hart(results)})")
     if stalls:
         print(f"  encoder stalls          hart 0: {stalls.group(1)}, hart 1: {stalls.group(2)}")
-    print(f"\n  {'':38} {'this run':>10} {'reference':>10}")
-    rows = (("IPI handler invocations", f"{inv}", f"{REFERENCE['invocations']}"),
-            ("cycles per invocation, mean", f"{total / inv:.0f}", f"{REFERENCE['cycles_per_inv']:.0f}"),
-            ("top 4 blocks, share of cycles", f"{top4:.1f}%", f"{REFERENCE['top4']:.1f}%"),
-            ("top 12 blocks, share of cycles", f"{top12:.1f}%", f"{REFERENCE['top12']:.1f}%"),
-            *((f"block {i + 1} after return, mean cycles", f"{means.get(i, float('nan')):.1f}",
-               f"{REFERENCE['post_exit'][i]:.1f}") for i in range(3)),
-            ("blocks 4-10 after return, mean cycles", f"{steady:.1f}", f"{REFERENCE['post_exit_steady']:.1f}"))
-    for label, now, ref in rows:
-        print(f"  {label:38} {now:>10} {ref:>10}")
-    print(f"  (reference: the 2026-09-24 run on the same bitstream; durations in core cycles)")
+    print()
+    rows = (("IPI handler invocations", f"{inv}"),
+            ("cycles per invocation, mean", f"{total / inv:.0f}"),
+            ("top 4 blocks, share of cycles", f"{top4:.1f}%"),
+            ("top 12 blocks, share of cycles", f"{top12:.1f}%"),
+            *((f"block {i + 1} after return, mean cycles", f"{means.get(i, float('nan')):.1f}") for i in range(3)),
+            ("blocks 4-10 after return, mean cycles", f"{steady:.1f}"))
+    for label, value in rows:
+        print(f"  {label:38} {value:>10}")
+    print(f"  (durations in core cycles)")
     if inv < MIN_INVOCATIONS:
         passed = False
         print(f"\n  only {inv} invocations for {FLIPS} protection flips -- wrong trace or a broken decode; INVESTIGATE")

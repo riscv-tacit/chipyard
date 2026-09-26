@@ -150,10 +150,6 @@ def caveat(out: Path) -> None:
     print("    logs/<arm>.<stage>.log                 one transcript per stage")
     print("    <arm>/bundle/                          the capture: trace, binaries, dwarf,")
     print("                                           patch map, and the decoder's tables")
-    print("\n  CAVEAT: the deltas above compare whole binaries. Inserting a guard also")
-    print("    re-lays-out the interpreter, and that layout term was measured at +2.41%")
-    print("    on this target. Attributing the delta to the guard alone requires the")
-    print("    layout-matched control (see lua-mulmul-gt127, GUARD_TARGET=127).")
 
 
 def main(vs: list[Variant], out: Path) -> bool:

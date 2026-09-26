@@ -530,10 +530,6 @@ def report(results: Path) -> bool:
     print("    <arm>/bundle/                          the capture: trace, binaries, dwarf,")
     print("    <arm>/bundle/out/                      patch map, and the decoder's tables")
     print("    logs/<step>.<arm>.log                  one transcript per step")
-    print("\n  CAVEAT: the deltas above compare whole binaries. Inserting a guard also")
-    print("    re-lays-out the interpreter, and that layout term was measured at +2.41%")
-    print("    on this target. Attributing the delta to the guard alone requires the")
-    print("    layout-matched control (see lua-mulmul-gt127, GUARD_TARGET=127).")
     return passed
 
 

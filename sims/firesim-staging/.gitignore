@@ -1,3 +1,13 @@
 *
 !.gitignore
 !Makefile
+!interval-trace-runtime.yaml
+!interval-trace-build.yaml
+!interval-trace-f2-runtime.yaml
+!interval-trace-hwdb.yaml
+!interval-trace-trigger-build.yaml
+!interval-trace-gcc-f2-runtime.yaml
+!interval-trace-trigger-hwdb.yaml
+!interval-trace-gcc-boot-f2-runtime.yaml
+!interval-trace-configurable-trigger-build.yaml
+!interval-trace-configurable-trigger-hwdb.yaml

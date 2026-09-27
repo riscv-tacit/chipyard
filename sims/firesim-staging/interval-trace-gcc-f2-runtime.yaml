@@ -1,0 +1,51 @@
+run_farm:
+  base_recipe: run-farm-recipes/aws_ec2.yaml
+  recipe_arg_overrides:
+    run_farm_tag: interval-gcc-test-runfarm
+    always_expand_run_farm: false
+    launch_instances_timeout_minutes: 15
+    run_instance_market: ondemand
+    spot_interruption_behavior: terminate
+    spot_max_price: ondemand
+    default_simulation_dir: /home/ubuntu
+    run_farm_hosts_to_use:
+    - f2.6xlarge: 1
+    - f2.12xlarge: 0
+    - f2.48xlarge: 0
+    - m4.16xlarge: 0
+    - z1d.3xlarge: 0
+    - z1d.6xlarge: 0
+    - z1d.12xlarge: 0
+metasimulation:
+  metasimulation_enabled: false
+  metasimulation_host_simulator: verilator
+  metasimulation_only_plusargs: +fesvr-step-size=128 +max-cycles=2000000 +verilator+seed+1
+  metasimulation_only_vcs_plusargs: +vcs+initreg+0 +vcs+initmem+0
+target_config:
+  topology: no_net_config
+  no_net_num_nodes: 1
+  link_latency: 6405
+  switching_latency: 10
+  net_bandwidth: 200
+  profile_interval: -1
+  default_hw_config: firesim_mega_boom_v3_interval_trace_configurable_trigger
+  plusarg_passthrough: +interval-trace-trigger +interval-trace-interval=1000000 +interval-trace-file=intervaltrace
+tracing:
+  enable: false
+  output_format: 0
+  selector: 1
+  start: 0
+  end: -1
+autocounter:
+  read_rate: 0
+workload:
+  workload_name: spec17-gcc-test-interval.json
+  terminate_on_completion: true
+  suffix_tag: gcc-test-interval
+host_debug:
+  zero_out_dram: false
+  disable_synth_asserts: false
+synth_print:
+  start: 0
+  end: -1
+  cycle_prefix: true

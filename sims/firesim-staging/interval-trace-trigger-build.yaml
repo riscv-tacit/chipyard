@@ -1,0 +1,13 @@
+build_farm:
+  base_recipe: build-farm-recipes/aws_ec2.yaml
+  recipe_arg_overrides:
+    build_farm_tag: interval-trigger-buildfarm
+    instance_type: z1d.12xlarge
+    build_instance_market: ondemand
+    spot_interruption_behavior: terminate
+    spot_max_price: ondemand
+    default_build_dir: /home/ubuntu/firesim-build
+builds_to_run:
+- firesim_mega_boom_v3_interval_trace_trigger
+agfis_to_share: []
+share_with_accounts: {}

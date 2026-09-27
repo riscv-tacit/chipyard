@@ -1,0 +1,42 @@
+# Interval trace smoke test; use with sample_config_build_recipes.yaml.
+# Run the FireSim manager from sims/firesim/deploy.
+run_farm:
+  base_recipe: run-farm-recipes/externally_provisioned.yaml
+  recipe_arg_overrides:
+    default_platform: XilinxAlveoU250InstanceDeployManager
+    default_simulation_dir: /tmp/firesim-interval-trace
+    run_farm_hosts_to_use:
+    - localhost: one_metasims_spec
+metasimulation:
+  metasimulation_enabled: true
+  metasimulation_host_simulator: verilator
+  metasimulation_only_plusargs: +fesvr-step-size=128 +max-cycles=2000000 +verilator+seed+1
+  metasimulation_only_vcs_plusargs: +vcs+initreg+0 +vcs+initmem+0
+target_config:
+  topology: no_net_config
+  no_net_num_nodes: 1
+  link_latency: 6405
+  switching_latency: 10
+  net_bandwidth: 200
+  profile_interval: -1
+  default_hw_config: alveo_u250_firesim_large_boom_v3_interval_trace
+  plusarg_passthrough: +interval-trace-interval=1000 +interval-trace-file=intervaltrace
+tracing:
+  enable: false
+  output_format: 0
+  selector: 1
+  start: 0
+  end: -1
+autocounter:
+  read_rate: 0
+workload:
+  workload_name: interval-trace-smoke.json
+  terminate_on_completion: false
+  suffix_tag: null
+host_debug:
+  zero_out_dram: false
+  disable_synth_asserts: false
+synth_print:
+  start: 0
+  end: -1
+  cycle_prefix: true

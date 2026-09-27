@@ -11,6 +11,19 @@ class SmallBoomV3Config extends Config(
   new boom.v3.common.WithNSmallBooms(1) ++                          // small boom config
   new chipyard.config.AbstractConfig)
 
+// Native PMU catalog with per-tile MMIO controls. No trace bridge yet.
+class SmallBoomV3PMUConfig extends Config(
+  new boom.v3.common.WithBoomPMU ++
+  new SmallBoomV3Config)
+
+class DualSmallBoomV3PMUConfig extends Config(
+  new boom.v3.common.WithBoomPMU ++
+  new DualSmallBoomV3Config)
+
+class MediumBoomV3PMUConfig extends Config(
+  new boom.v3.common.WithBoomPMU ++
+  new MediumBoomV3Config)
+
 class MediumBoomV3Config extends Config(
   new boom.v3.common.WithNMediumBooms(1) ++                         // medium boom config
   new chipyard.config.AbstractConfig)

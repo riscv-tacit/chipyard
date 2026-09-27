@@ -51,6 +51,7 @@ class ChipyardStage extends ChiselStage {
         Dependency[chipyard.stage.phases.TransformAnnotations],
         Dependency[chipyard.stage.phases.PreElaboration],
         Dependency[ChipyardChiselStage],
+        Dependency[chipyard.stage.phases.ValidatePMU],
         Dependency[chipyard.stage.phases.GenerateFirrtlAnnos],
         Dependency[chipyard.stage.phases.AddDefaultTests],
         Dependency[chipyard.stage.phases.GenerateTestSuiteMakefrags],

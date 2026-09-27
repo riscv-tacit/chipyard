@@ -250,6 +250,38 @@ class FireSimDmiRocketConfig extends Config(
 //*****************************************************************
 // Boom config, base off chipyard's LargeBoomV3Config
 //*****************************************************************
+// Interval tracing uses the existing architectural TracePort and raw PMU events.
+// The MMIO-only bridge set deliberately has no TracerV consumer.
+class FireSimSmallBoomV3IntervalTraceConfig extends Config(
+  new WithBoomIntervalTrace ++
+  new WithDefaultMMIOOnlyFireSimBridges ++
+  new WithFireSimConfigTweaks ++
+  new chipyard.SmallBoomV3Config)
+
+class FireSimDualSmallBoomV3IntervalTraceConfig extends Config(
+  new WithBoomIntervalTrace ++
+  new WithDefaultMMIOOnlyFireSimBridges ++
+  new WithFireSimConfigTweaks ++
+  new chipyard.DualSmallBoomV3Config)
+
+class FireSimMediumBoomV3IntervalTraceConfig extends Config(
+  new WithBoomIntervalTrace ++
+  new WithDefaultMMIOOnlyFireSimBridges ++
+  new WithFireSimConfigTweaks ++
+  new chipyard.MediumBoomV3Config)
+
+class FireSimLargeBoomV3IntervalTraceConfig extends Config(
+  new WithBoomIntervalTrace ++
+  new WithDefaultMMIOOnlyFireSimBridges ++
+  new WithFireSimConfigTweaks ++
+  new chipyard.LargeBoomV3Config)
+
+class FireSimMegaBoomV3IntervalTraceConfig extends Config(
+  new WithBoomIntervalTrace ++
+  new WithDefaultMMIOOnlyFireSimBridges ++
+  new WithFireSimConfigTweaks ++
+  new chipyard.MegaBoomV3Config)
+
 class FireSimLargeBoomConfig extends Config(
   new WithDefaultFireSimBridges ++
   new WithFireSimConfigTweaks ++

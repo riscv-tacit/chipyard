@@ -86,7 +86,12 @@ case class UARTTSIPort     (val getIO: () => UARTTSIIO)
 case class SuccessPort     (val getIO: () => Bool)
     extends Port[Bool]
 
-case class TracePort       (val getIO: () => TraceOutputTop, val cosimCfg: SpikeCosimConfig)
+/** Sideband event port owned by the corresponding entry of TracePort. */
+case class PMUTracePort(val getIO: () => pmu.PMUEventBundle, manifest: pmu.PMUManifest, retirementLatency: Int)
+    extends Port[pmu.PMUEventBundle]
+
+case class TracePort       (val getIO: () => TraceOutputTop, val cosimCfg: SpikeCosimConfig,
+                            pmuPorts: Seq[PMUTracePort] = Nil)
     extends Port[TraceOutputTop]
 
 case class CustomBootPort  (val getIO: () => Bool)

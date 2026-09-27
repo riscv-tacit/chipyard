@@ -480,6 +480,11 @@ class WithTraceGenSuccessPunchthrough extends OverrideIOBinder({
   }
 })
 
+case object ExportPMUTrace extends Field[Boolean](false)
+class WithPMUTraceIO extends Config((site, here, up) => {
+  case ExportPMUTrace => true
+})
+
 class WithTraceIOPunchthrough extends OverrideLazyIOBinder({
   (system: CanHaveTraceIO) => InModuleBody {
     val ports: Option[TracePort] = system.traceIO.map { t =>
@@ -514,7 +519,27 @@ class WithTraceIOPunchthrough extends OverrideLazyIOBinder({
         mem0_base = p(ExtMem).map(_.master.base).getOrElse(BigInt(0)),
         mem0_size = p(ExtMem).map(_.master.size).getOrElse(BigInt(0)),
       )
-      TracePort(() => trace, cfg)
+      val pmuPorts = if (p(ExportPMUTrace)) {
+        val tileIds = chipyardSystem.traceNodes.keys.toSeq
+        require(tileIds.size == trace.traces.size, "Trace port and tile identities disagree")
+        tileIds.map { tileId =>
+          val tile = chipyardSystem.totalTiles(tileId) match {
+            case b: boom.v3.common.BoomTile => b
+            case other => throw new IllegalArgumentException(s"PMU trace requires BOOM v3, got ${other.getClass.getName}")
+          }
+          val events = tile.module.pmuEvents.getOrElse(
+            throw new IllegalArgumentException(s"PMU trace tile $tileId has no event registry"))
+          val pmu_events = IO(Output(new pmu.PMUEventBundle(events.manifest.events.map(_.incrementBits))))
+            .suggestName(s"pmu_events_$tileId")
+          pmu_events.increments.zip(events.increments).foreach { case (sink, source) =>
+            sink := chisel3.util.experimental.BoringUtils.bore(source)
+          }
+          // BOOM's architectural trace is delayed by one cycle. Raw events stay
+          // undelayed in the DUT; the FPGA widget aligns accepted observations.
+          PMUTracePort(() => pmu_events, events.manifest, retirementLatency = 1)
+        }
+      } else Nil
+      TracePort(() => trace, cfg, pmuPorts)
     }
     (ports.toSeq, Nil)
   }

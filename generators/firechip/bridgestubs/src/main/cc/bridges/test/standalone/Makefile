@@ -20,13 +20,18 @@ HDRS := $(wildcard $(BRIDGES_DIR)/tracedoctor*.h)
 tracedoctor_engine_test: $(SRCS) $(HDRS)
 	$(CXX) $(CXXFLAGS) -o $@ $(SRCS)
 
-.PHONY: run build clean
+intervaltrace_decoder_test: intervaltrace_decoder_test.cc $(BRIDGES_DIR)/intervaltrace_decoder.h
+	$(CXX) $(CXXFLAGS) -o $@ $<
+
+.PHONY: run build clean interval-test
+interval-test: intervaltrace_decoder_test
+	./intervaltrace_decoder_test
 run: tracedoctor_engine_test
 	./tracedoctor_engine_test
 
 build: tracedoctor_engine_test
 
 clean:
-	rm -f tracedoctor_engine_test
+	rm -f tracedoctor_engine_test intervaltrace_decoder_test
 
 .DEFAULT_GOAL := run

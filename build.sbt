@@ -534,6 +534,17 @@ lazy val firechip_bridgeinterfaces = (project in file("generators/firechip/bridg
     commonSettings,
   )
 
+// Pure interval datapath tests use the target Chisel toolchain. The same RTL
+// sources are compiled by Golden Gate with Chisel 3 in production.
+lazy val firechip_intervaltests = (project in file("generators/firechip/intervaltests"))
+  .dependsOn(firechip_bridgeinterfaces)
+  .settings(chiselSettings, commonSettings)
+  .settings(
+    Compile / unmanagedSourceDirectories := Seq(baseDirectory.value / "../goldengateimplementations/src/main/scala/interval"),
+    libraryDependencies += "edu.berkeley.cs" %% "chiseltest" % chiselTestVersion % "test",
+  )
+  .settings(scalaTestSettings)
+
 // Target-side bridge definitions, CC files, etc used for FireSim.
 // This only compiled with Chipyard.
 lazy val firechip_bridgestubs = (project in file("generators/firechip/bridgestubs"))

@@ -39,7 +39,7 @@ Additionally, it would be useful to download and inspect some trace visualizatio
 * Viewing `trace-256.iter*.slowest1.speedscope.json` should show the ping-pong tail latency case reported in Figure 16. 
 * Viewing `trace-256-fix.iter*.slowest1.speedscope.json` should show the ping-pong tail latency is eliminated. This is reported as text in the paper. 
 
-To view these traces, download these traces to your own machine, open [speedscope.com](speedscop.com) and drop in the traces. 
+To view these traces, download these traces to your own machine, open [speedscope.app](speedscop.app) and drop in the traces. 
 
 ## 6.2 Variational Basic Block Profiling
 

@@ -30,3 +30,7 @@ project/project/
 .classpath_cache/
 .vscode/
 tests/build/
+__pycache__/
+/test_run_dir/
+/firrtl_black_box_resource_files.f
+/plusarg_reader.v

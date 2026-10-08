@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and run Baremetal-IDE's native TilePMU test on a complete BOOM core."""
+"""Build and run Baremetal-IDE's tile PMU test on a complete BOOM core."""
 import argparse
 import os
 from pathlib import Path
@@ -62,7 +62,7 @@ def main():
     build = OUT / 'baremetal'
     run(['cmake', '-S', ide, '-B', build,
          f'-DCMAKE_TOOLCHAIN_FILE={ide}/riscv-gcc.cmake',
-         f'-DTILE_PMU_MANIFEST={elaboration}.pmu.json',
+         f'-DTILE_PMU_MANIFEST={elaboration}.boom_tile_0.pmu.json',
          f'-DTILE_PMU_PLATFORM_JSON={elaboration}.json',
          f'-DTILE_PMU_SOFTWARE_DIR={ROOT}/generators/pmu/software'], OUT / 'software-configure.log', env)
     run(['cmake', '--build', build, '--target', 'tile-pmu-test', '-j', args.jobs],

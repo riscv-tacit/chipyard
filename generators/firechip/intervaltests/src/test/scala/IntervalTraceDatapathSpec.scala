@@ -17,7 +17,7 @@ class IntervalTraceDatapathSpec extends AnyFlatSpec with ChiselScalatestTester {
   private case class Record(kind: Int, flags: Int, words: Vector[BigInt])
   private def key(lanes: Int, counters: Int): IntervalTraceBridgeKey = IntervalTraceBridgeKey("test_tile",
     TraceBundleWidths(lanes, 40, 32, None, 64, 40),
-    (0 until counters).map(i => IntervalPMUEvent(i, s"event_$i", "events", "Test event", 64)))
+    (0 until counters).map(i => IntervalPMUEvent(i, s"event_$i", "events", "Test event")))
 
   private def decode(beats: Seq[BigInt], n: Int): Vector[Record] = {
     val words = beats.flatMap(b => (0 until 8).map(i => (b >> (64 * i)) & mask64))
@@ -185,7 +185,7 @@ class IntervalTraceDatapathSpec extends AnyFlatSpec with ChiselScalatestTester {
     val work = cycle(Some(Slot(0x200c, 0x63)), Some(Slot(0x2010)))
     val end = cycle(None, Some(Slot(0x2014, 0x10013)), Some(Slot(0x2018, 0x63)))
     val captured = Seq(begin, work, end)
-    test(new IntervalTraceDatapath(k)) { dut =>
+    test(new IntervalTraceDatapath(k, incrementBits = Some(64))) { dut =>
       val driver = new Driver(dut, k, 73)
       dut.io.trigger_selector.poke(3.U)
       driver.start(4)
@@ -213,7 +213,7 @@ class IntervalTraceDatapathSpec extends AnyFlatSpec with ChiselScalatestTester {
       Some(Slot(0x1004, 0x10013))), Seq(2, 1, 0).map(BigInt(_)))
     val endThenStart = Cycle(Seq(Some(Slot(0x2000, 0x10013)), None,
       Some(Slot(0x2004, 0x8013))), Seq(2, 1, 0).map(BigInt(_)))
-    test(new IntervalTraceDatapath(k)) { dut =>
+    test(new IntervalTraceDatapath(k, incrementBits = Some(64))) { dut =>
       val driver = new Driver(dut, k, 89)
       dut.io.trigger_selector.poke(3.U)
       driver.start(1000000)
@@ -235,7 +235,7 @@ class IntervalTraceDatapathSpec extends AnyFlatSpec with ChiselScalatestTester {
     val input = (0 until 7).map(i => Cycle(
       if (i == 3) Seq.empty else Seq(Some(Slot(0x1000 + 4 * i))),
       Seq(BigInt(if (i == 3) 0 else 1), 1, i), reset = i == 0))
-    test(new IntervalTraceDatapath(k)) { dut =>
+    test(new IntervalTraceDatapath(k, incrementBits = Some(64))) { dut =>
       val driver = new Driver(dut, k, 103)
       dut.io.trigger_selector.poke(1.U)
       dut.io.trigger_start.poke(2.U)
@@ -254,7 +254,7 @@ class IntervalTraceDatapathSpec extends AnyFlatSpec with ChiselScalatestTester {
     val k = key(1, 3)
     val a = Cycle(Seq(Some(Slot(0x1000))), Seq(1, 1, 5).map(BigInt(_)))
     val b = Cycle(Seq(Some(Slot(0x2000))), Seq(1, 1, 7).map(BigInt(_)))
-    test(new IntervalTraceDatapath(k)) { dut =>
+    test(new IntervalTraceDatapath(k, incrementBits = Some(64))) { dut =>
       val driver = new Driver(dut, k, 105)
       dut.io.trigger_selector.poke(1.U)
       dut.io.trigger_start.poke(1.U)
@@ -278,7 +278,7 @@ class IntervalTraceDatapathSpec extends AnyFlatSpec with ChiselScalatestTester {
   it should "capture a one-cycle window at zero and include an idle endpoint" in {
     val k = key(1, 3)
     val idle = Cycle(Seq.empty, Seq(0, 1, 5).map(BigInt(_)))
-    test(new IntervalTraceDatapath(k)) { dut =>
+    test(new IntervalTraceDatapath(k, incrementBits = Some(64))) { dut =>
       val driver = new Driver(dut, k, 107)
       dut.io.trigger_selector.poke(1.U)
       dut.io.trigger_start.poke(0.U)
@@ -297,7 +297,7 @@ class IntervalTraceDatapathSpec extends AnyFlatSpec with ChiselScalatestTester {
     val begin = Cycle(Seq(None, None, Some(Slot(pc))), Seq(1, 1, 5).map(BigInt(_)))
     val end = Cycle(Seq(Some(Slot(pc + 4))), Seq(1, 1, 7).map(BigInt(_)))
     val outside = Cycle(Seq(Some(Slot(0x2000, 0x8013))), Seq(1, 1, 11).map(BigInt(_)))
-    test(new IntervalTraceDatapath(k)) { dut =>
+    test(new IntervalTraceDatapath(k, incrementBits = Some(64))) { dut =>
       val driver = new Driver(dut, k, 109)
       dut.io.trigger_selector.poke(2.U)
       dut.io.trigger_start.poke(pc.U)
@@ -320,7 +320,7 @@ class IntervalTraceDatapathSpec extends AnyFlatSpec with ChiselScalatestTester {
     val k = key(2, 3)
     val begin = Cycle(Seq(None, Some(Slot(0x1000, 0xabcd0013L))), Seq(1, 1, 5).map(BigInt(_)))
     val end = Cycle(Seq(Some(Slot(0x1004, 0xef120013L))), Seq(1, 1, 7).map(BigInt(_)))
-    test(new IntervalTraceDatapath(k)) { dut =>
+    test(new IntervalTraceDatapath(k, incrementBits = Some(64))) { dut =>
       val driver = new Driver(dut, k, 113)
       dut.io.trigger_selector.poke(3.U)
       dut.io.trigger_start.poke("hffff0000abcd0000".U)
@@ -343,7 +343,7 @@ class IntervalTraceDatapathSpec extends AnyFlatSpec with ChiselScalatestTester {
   it should "give end priority when both patterns match the same retirement" in {
     val k = key(1, 3)
     val cycle = Cycle(Seq(Some(Slot(0x1000))), Seq(1, 1, 5).map(BigInt(_)))
-    test(new IntervalTraceDatapath(k)) { dut =>
+    test(new IntervalTraceDatapath(k, incrementBits = Some(64))) { dut =>
       val driver = new Driver(dut, k, 127)
       dut.io.trigger_selector.poke(3.U)
       // A zero mask deliberately matches any retired instruction.
@@ -359,7 +359,7 @@ class IntervalTraceDatapathSpec extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "reject invalid selectors and reversed cycle windows" in {
-    test(new IntervalTraceDatapath(key(1, 3))) { dut =>
+    test(new IntervalTraceDatapath(key(1, 3), incrementBits = Some(64))) { dut =>
       val driver = new Driver(dut, key(1, 3), 131)
       driver.start(100)
       dut.io.trigger_selector.poke(4.U)
@@ -389,7 +389,7 @@ class IntervalTraceDatapathSpec extends AnyFlatSpec with ChiselScalatestTester {
       Cycle(Seq(slot(0x13)), inc),
       Cycle(Seq.empty, inc, trap = true),
       Cycle(Seq(slot(0x13)), inc))
-    test(new IntervalTraceDatapath(k)).withAnnotations(Seq(firrtl2.options.TargetDirAnnotation(
+    test(new IntervalTraceDatapath(k, incrementBits = Some(64))).withAnnotations(Seq(firrtl2.options.TargetDirAnnotation(
       "generators/firechip/intervaltests/target/prefixes"))) { dut =>
       val driver = new Driver(dut, k, 31)
       driver.start(4)
@@ -418,7 +418,7 @@ class IntervalTraceDatapathSpec extends AnyFlatSpec with ChiselScalatestTester {
       }
       Cycle(slots, Vector.tabulate(18)(i => if (cycle == 0) mask64 - i else BigInt(i + 3)), trap = cycle % 11 == 0)
     }
-    test(new IntervalTraceDatapath(k)).withAnnotations(Seq(firrtl2.options.TargetDirAnnotation(
+    test(new IntervalTraceDatapath(k, incrementBits = Some(64))).withAnnotations(Seq(firrtl2.options.TargetDirAnnotation(
       "generators/firechip/intervaltests/target/random"))) { dut =>
       val driver = new Driver(dut, k, 17)
       driver.start(7)
@@ -430,7 +430,7 @@ class IntervalTraceDatapathSpec extends AnyFlatSpec with ChiselScalatestTester {
 
   it should "flush before target reset, establish a new baseline, and stop without another target token" in {
     val k = key(1, 1)
-    test(new IntervalTraceDatapath(k)).withAnnotations(Seq(firrtl2.options.TargetDirAnnotation(
+    test(new IntervalTraceDatapath(k, incrementBits = Some(64))).withAnnotations(Seq(firrtl2.options.TargetDirAnnotation(
       "generators/firechip/intervaltests/target/reset"))) { dut =>
       val driver = new Driver(dut, k, 89)
       driver.start(10)
@@ -451,7 +451,7 @@ class IntervalTraceDatapathSpec extends AnyFlatSpec with ChiselScalatestTester {
 
   it should "ignore disabled observations, reject a zero start length and latch configuration for the epoch" in {
     val k = key(1, 2)
-    test(new IntervalTraceDatapath(k)).withAnnotations(Seq(firrtl2.options.TargetDirAnnotation(
+    test(new IntervalTraceDatapath(k, incrementBits = Some(64))).withAnnotations(Seq(firrtl2.options.TargetDirAnnotation(
       "generators/firechip/intervaltests/target/controls"))) { dut =>
       val driver = new Driver(dut, k, 13)
       driver.send(Cycle(Seq(Some(Slot(0x1000, 0x63))), Seq(99, 99)))

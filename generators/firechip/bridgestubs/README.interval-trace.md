@@ -4,13 +4,11 @@ See [dependencies and porting](PORTING.interval-trace.md) for compiler, BOOM,
 submodule and FPGA-platform prerequisites when applying this outside the fork.
 
 The target interface, BOOM/Chipyard routing, independent harness binder, FPGA host
-widget, and interval-aggregating host driver are implemented. An
-[offline processor](../../../tools/interval-trace/README.md) produces BBV/BBTV
-vectors, PMU deltas/rates, and interval IPC using a reusable C++ aggregation core.
+widget, and interval-aggregating host driver are implemented. The driver writes
+per-interval basic-block and PMU aggregates in interval JSONL version 2.
 Validation covers target elaboration, RTL unit tests, the Chisel 6-to-Chisel 3
-bridge metadata handoff, and a complete Large BOOM
-FireSim Verilator metasimulation, and a MegaBOOM AWS F2 smoke run. Mega
-metasimulation remains unvalidated.
+bridge key handoff, and a complete Large BOOM FireSim Verilator metasimulation.
+MegaBOOM metasimulation and AWS F2 runs of this version remain unvalidated.
 
 ## Attachment
 
@@ -29,22 +27,19 @@ interval harness binder, PMU sideband export, BOOM event registration, and exist
 TracerV consumer. The interval bridge reuses `TracePort`/`TileTraceIO`; it adds no
 second retirement output and does not use TraceDoctor or TACIT encoding.
 
-`WithBoomPMUEvents` creates a registry per independently elaborated BOOM v3 tile.
-`BoomTileModuleImp.pmuEvents` exposes its sealed event surface after the producers
-have elaborated. `WithPMUTraceIO` routes narrow raw increments through Chipyard,
-paired with each trace entry by tile identity. The default interval configs add
-no native counter bank or MMIO PMU. Compose `WithBoomPMU` as well to instantiate
-that independent bank; its enable/clear/snapshot controls do not affect tracing.
+BOOM's `WithPMUEvents` gives each independently elaborated BOOM v3 tile a PMU
+registry, and the tile exposes its events through the PMU library's
+`CanHavePMUEvents`. `WithPMUTraceIO(retirementLatency)` routes each tile's raw
+increments through Chipyard with `PMUEvents.bore()`, paired with each trace entry
+by tile identity. The default interval configs add no tile PMU. Compose BOOM's
+`WithTilePMU` as well to add one; its enable/clear/snapshot controls do not affect
+tracing.
 
-The registry catalog initially has unresolved increment widths.
-[`DeferredIntervalTraceBridge`](src/main/scala/interval/DeferredIntervalTraceBridge.scala)
-retains these inferred widths and requests compiler finalization. Chipyard's PMU
-validation phase checks each consumer's event identity, exact width, clock and
-reset against its owning registry, including intermediate width conversions.
-It then supplies a concrete `IntervalTraceBridgeKey` before exporting annotations.
-Golden Gate receives the finalized, framework-independent metadata; no provisional
-width defaults or compiler-only PMU annotations cross that boundary. The target's
-`<name>.pmu.json` records the same finalized catalogs.
+The bridge key carries each tile's event list (ID, name, unit and description).
+The bridge's increment ports are unsized on both sides. On the target side, FIRRTL
+width inference sizes them from the tile's increments while Golden Gate lowers the
+target; Golden Gate then builds each channel from those port widths, and the
+FPGA-side widget's increment inputs are inferred from the channels they connect to.
 
 Harness binders use first-match selection. Put `WithBoomIntervalTrace` before a
 fallback `TracePort` binder. Stacking separate TracePort binders does not enable
@@ -62,11 +57,11 @@ retirement still pairs with its pre-reset PMU sample; the following observation
 carries reset and is excluded. No alignment registers are added to the DUT.
 Capture stop includes all matched observations; the newest raw PMU sample still
 waiting for its retirement trace is outside that capture. The catalog records
-`retirement_latency` (one for BOOM v3, zero for an already aligned producer).
+`retirement_latency` (one for BOOM v3, set by `WithBoomIntervalTrace`; zero for an
+already aligned producer).
 
-For a target already providing a compiler-finalized manifest and aligned inputs,
-[`IntervalTraceBridge`](src/main/scala/interval/IntervalTraceBridge.scala) remains
-available as a direct attachment helper.
+[`IntervalTraceBridge`](src/main/scala/interval/IntervalTraceBridge.scala) attaches
+the bridge to a tile's trace and event-ID-ordered increments.
 
 ## Input and accounting
 
@@ -83,7 +78,7 @@ reuses the shared trace bundle:
   requires an RV64 producer (`causeWidth == 64`). It does not consume writeback
   data or CSR time.
 - Clock/reset accompany the trace; narrow per-event increments accompany it.
-  Native MMIO PMU enable/clear controls do not affect this bank.
+  Tile PMU enable/clear controls do not affect this bank.
 
 [`IntervalTraceDatapath`](../goldengateimplementations/src/main/scala/interval/IntervalTraceDatapath.scala)
 advances time and modulo-2^64 PMU counters only on accepted non-reset target tokens
@@ -265,6 +260,7 @@ and aggregates each interval directly. Its default outputs are:
 - `intervaltrace-0-intervals.jsonl`: `interval_format_version: 2` records containing
   `[block_id,instructions,cycles,executions]` block entries, PMU deltas, endpoints,
   and IPC. IDs remain stable across intervals and epochs in the same capture.
+  See [Interval JSONL format](#interval-jsonl-format).
 
 New definitions are appended and flushed before their referencing interval is
 written and flushed. The driver retains an identity-to-ID lookup plus the current
@@ -273,12 +269,70 @@ These flushes empty userspace buffers, not a power-loss durability guarantee.
 JSONL retains the existing `.partial` naming until complete stream validation and
 successful output closes. No interrupted-capture recovery mode is added.
 
-The existing [feature exporter](../../../tools/interval-trace/README.md) supports
-legacy verbose JSONL and optional record CSVs, not compact version 2. Compact
-collection stops at the driver outputs; it does not generate BBV/BBTV or RFV
-exports. `tools/pmu/check-compact-capture.py` checks catalog references, interval
-continuity, measurement totals and SPEC output comparisons without exporting
-features.
+`tools/interval-trace/check-compact-capture.py` validates a version 2 capture:
+block catalog references, interval continuity, measurement totals, PMU endpoints,
+and the smoke or SPEC workload results.
+
+### Interval JSONL format
+
+#### Version 2
+
+`intervaltrace-0-intervals.jsonl` holds one JSON object per line, one per interval,
+in capture order. Every record starts with `"interval_format_version": 2`.
+
+| Field | Meaning |
+|---|---|
+| `interval_format_version` | `2`. |
+| `epoch` | Capture epoch ID, starting at 1. Target reset and each new trigger window start a new epoch. |
+| `snapshot_id` | ID of the PMU snapshot that closes this interval (see [Stream format v1](#stream-format-v1)). |
+| `nominal_interval` | Nominal interval length in retired instructions, fixed for the epoch. |
+| `start_retired`, `end_retired` | Logical retirement counts at the interval's opening and closing boundaries, from the epoch baseline. |
+| `start_cycle`, `end_cycle` | Target cycle counts at the opening and closing snapshots. |
+| `start_physical_retired`, `end_physical_retired` | Retirement counts of the complete target cycles at the opening and closing snapshots. |
+| `instructions` | `end_retired - start_retired`; equal to the sum of the block entries' instructions. |
+| `cycles` | `end_cycle - start_cycle`. |
+| `attributed_cycles` | Sum of the block entries' cycles. Equal to `cycles` except in a final interval. |
+| `unattributed_cycles` | `cycles - attributed_cycles`: cycles after the last block of a final interval. |
+| `physical_retirements` | `end_physical_retired - start_physical_retired`: retirements over the same whole cycles as `counter_deltas`. |
+| `partial_blocks` | Number of block instances in the interval that start or end mid-block. |
+| `flags` | Flags of the closing PMU snapshot, using the stream flag bits: `0` nominal; bit 4 final snapshot; bit 5 target-reset closure. |
+| `bb_flags` | Bitwise OR of the flags of every block instance in the interval, using the stream flag bits. |
+| `ipc` | `instructions / cycles`; `null` when `cycles` is 0. |
+| `final` | `true` for the last interval of an epoch, closed by the final snapshot. It can be shorter than `nominal_interval`. |
+| `counter_deltas` | For each PMU event, the counter difference between the opening and closing snapshots, modulo 2^64, in event-ID order of `intervaltrace-0.json`. |
+| `blocks` | One `[block_id, instructions, cycles, executions]` entry per distinct block in the interval: retired instructions and attributed cycles within this interval, and the number of times the block executed. |
+
+A block's cycles run from the preceding block boundary through its own; when
+several blocks end in the same target cycle, the first receives that cycle's
+elapsed time and the others zero.
+
+`intervaltrace-0-blocks.csv` defines the block IDs:
+
+| Column | Meaning |
+|---|---|
+| `id` | Block ID, from 1, in order of first appearance. Stable across intervals and epochs of one capture. |
+| `start_pc`, `end_pc` | Hexadecimal PCs of the block's first and last retired instructions. |
+| `privilege` | Privilege/debug value from the trace's three-bit field (`0` user, `1` supervisor, `3` machine). |
+| `partial_start`, `partial_end` | `1` if the block's instances start (end) mid-block: at capture start or stop, a trap, a PC discontinuity, or a privilege change. |
+
+All five columns together identify a block: the same PC range with a different
+privilege or partial flag has its own ID. Each definition is written to
+`blocks.csv` before the first interval that refers to it. While a capture runs,
+the interval file is named `intervaltrace-0-intervals.jsonl.partial`; it receives
+its final name after the stream validates and the outputs close.
+
+#### Version 1 (deprecated)
+
+Captures written before version 2 have no `interval_format_version` field and no
+`blocks.csv`. Each block entry carries its identity inline:
+`[start_pc, end_pc, privilege, partial_flags, instructions, cycles, executions]`,
+with PCs as integers and `partial_flags` using stream flag bit 1 (value 2) for a
+partial start and bit 2 (value 4) for a partial end. All other fields match
+version 2.
+
+The driver no longer writes version 1. Read it only to process existing captures:
+numbering the distinct `(start_pc, end_pc, privilege, partial_flags)` entries in
+order of first appearance gives the version 2 block IDs.
 
 With `+interval-trace-csv`, the additional files are:
 
@@ -294,8 +348,7 @@ With `+interval-trace-csv`, the additional files are:
 
 Every CSV row carries its `epoch` and a shared, one-based `record` sequence number.
 Sorting all three files by `record` reconstructs original packet order, including
-PMU-before-BB ordering. CSV contains no 512-bit padding. These are decoded records;
-these optional CSVs can also be reprocessed offline with `--from-csv`.
+PMU-before-BB ordering. CSV contains no 512-bit padding. These are decoded records.
 
 Options:
 
@@ -337,16 +390,6 @@ normal shutdown, and file I/O failures remain fatal. Failed captures print error
 without a successful-capture summary. Repeated `finish()` calls do not repeat
 warnings or summaries.
 
-Feature extraction is available offline, without changing the driver capture path:
-
-```sh
-python3 tools/interval-trace/process.py tools/pmu/target/interval-metasim/large/intervaltrace-0
-```
-
-See the [processor documentation](../../../tools/interval-trace/README.md) for
-output schemas, block identities, rates, partial-tail and zero-cycle policies,
-and the C++ callback API intended for later driver integration.
-
 Run from the Chipyard root with its Java/Scala tool environment:
 
 ```sh
@@ -358,14 +401,20 @@ python3 generators/firechip/intervaltests/check-host.py
 ```
 
 The legacy check uses FireSim's cached dependency classpath to compile the actual
-widget with Chisel 3.6.1, import a Chisel 6.7.0 annotation, and emit Verilog plus the
-driver header. The host check compiles that generated constructor/MMIO layout and
+widget with Chisel 3.6.1, import a Chisel 6.7.0 annotation, and elaborate the widget,
+emitting CHIRRTL plus the driver header. Standalone, the widget's increment inputs
+are unsized and undriven, so it is not lowered to Verilog here; Golden Gate sizes
+them from the target channels in a real build. The host check compiles that generated constructor/MMIO layout and
 the driver, tests malformed/fragmented packets, and decodes RTL-produced streams.
 It also runs the actual driver against mocked MMIO/stream endpoints using those
 RTL streams, checking every CSV field against the original packets, quoted event
 names, shared record ordering, optional byte-for-byte raw dumps, metadata files,
 stop/flush ordering, empty/disabled captures, idempotent finish, and fatal
-decode/write/close failures.
+decode/write/close failures. It checks the interval JSONL version 2 output across
+output modes and against per-epoch totals and block identities taken directly
+from the packets, the exact aggregation of a synthetic stream covering counter
+wraparound, reset epochs, same-cycle snapshots, overshoot and an idle tail, and
+the rejection of invalid streams.
 
 RTL tests cover holes, idle cycles, overshoot debt, same-cycle boundaries, coherent
 PMU capture, 18/19-counter padding, wraparound, compressed instructions, traps,
@@ -381,12 +430,13 @@ python3 generators/firechip/intervaltests/check-legacy.py \
   tools/pmu/target/interval-bridge/small/interval-small.anno.json
 ```
 
-The optional annotation argument checks the actual target's finalized bridge key.
-The attachment tests reject wrong clock/reset, event substitution, width mismatch,
-and intermediate truncation. Aligner tests cover startup, token stalls, and reset
-assertion/deassertion, including removal of the synthetic HostPort startup token.
-Target elaboration covers Small, DualSmall, Medium, Large, Mega, and Small with
-native PMU enabled. End-to-end metasim execution currently covers Large only.
+The optional annotation argument elaborates the widget from an actual target's
+bridge key; that key's widths are filled by Golden Gate, so pass an annotation
+file whose key already has widths, such as the one the interface test writes.
+The interface tests cover key validation, conversion from a tile's event list,
+unresolved keys, and per-tile port shapes. Aligner tests cover startup, token
+stalls, and reset assertion/deassertion, including removal of the synthetic
+HostPort startup token. End-to-end metasim execution covers Large.
 
 ## FireMarshal metasim smoke test
 
@@ -401,7 +451,7 @@ The [FireMarshal workload](../../../software/firemarshal/example-workloads/inter
 uses `bare-base.json` and the existing HTIF baremetal runtime. It updates an array
 through a small branch/memory loop, checks a checksum, prints
 `PASS interval-trace-smoke checksum=40832`, and returns zero. It does not program
-trace hardware or native PMU MMIO. FireMarshal installs a baremetal boot ELF and
+trace hardware or the tile PMU. FireMarshal installs a baremetal boot ELF and
 a dummy rootfs; no Linux image is built. Collected outputs include `uartlog`,
 `intervaltrace-0-intervals.jsonl`, `intervaltrace-0-blocks.csv`, and `intervaltrace-0.json` by default.
 Use `--csv` or `--raw` on the smoke runner to retain the optional detailed outputs.
@@ -409,20 +459,20 @@ Use `--csv` or `--raw` on the smoke runner to retain the optional detailed outpu
 From the Chipyard root, with the checkout's conda toolchain installed:
 
 ```sh
-.conda-env/bin/python3 tools/pmu/run-interval-metasim.py --core large
+.conda-env/bin/python3 tools/interval-trace/run-interval-metasim.py --core large
 # Reuse the built metasimulator for another run:
-.conda-env/bin/python3 tools/pmu/run-interval-metasim.py --core large --skip-build
+.conda-env/bin/python3 tools/interval-trace/run-interval-metasim.py --core large --skip-build
 # Build and run Mega instead:
-.conda-env/bin/python3 tools/pmu/run-interval-metasim.py --core mega
+.conda-env/bin/python3 tools/interval-trace/run-interval-metasim.py --core mega
 ```
 
 The local runner builds and installs the image through FireMarshal, invokes the
 Chipyard generator, Golden Gate and Verilator, runs the workload, and requires a
 nonempty interval capture plus successful in-driver decoder checks. It checks
 `rob.instructions_retired` and `tile.cycles` deltas against each interval's physical
-retirement and cycle counts and exports the interval features. With `--csv`, it also
-checks the detailed snapshot endpoints and record ordering. Results and stage logs
-are under `tools/pmu/target/interval-metasim/<core>/`. It sets its own local tool
+retirement and cycle counts and validates the capture with `check-compact-capture.py`.
+With `--csv`, it also checks the detailed snapshot endpoints and record ordering.
+Results and stage logs are under `tools/interval-trace/target/interval-metasim/<core>/`. It sets its own local tool
 paths so a relocated checkout does not depend on a stale generated `env.sh`.
 `--skip-target-elaboration` is only for explicitly reusing target FIRRTL and
 annotations already in that recipe's FireSim generated directory. Add `--raw` to
@@ -541,9 +591,8 @@ setup or workload failures when that shell exits. Use a distinct `run_farm_tag`
 and `suffix_tag` for concurrent runs. Results under `results-workload/` include
 `uartlog`, interval JSONL, and the counter catalog with the updated host driver.
 Archived driver bundles from earlier builds still produce CSVs and require their
-matching workload output lists. Pass the collected
-`intervaltrace-0` prefix to `tools/interval-trace/process.py` to generate BBV, BBTV,
-RFV, and interval summaries. Hardware and metasim runs should satisfy the same
+matching workload output lists. Validate a collected capture with
+`tools/interval-trace/check-compact-capture.py`. Hardware and metasim runs should satisfy the same
 trace and PMU invariants; cycle counts depend on the core configuration.
 
 Validated on AWS F2 with MegaBOOM and `agfi-05e72126d1d207bad` on

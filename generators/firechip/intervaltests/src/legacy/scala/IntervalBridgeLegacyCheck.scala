@@ -19,10 +19,13 @@ object IntervalBridgeLegacyCheck {
     val key = annotations.collect { case a: BridgeAnnotation if a.widgetClass == "firechip.goldengateimplementations.IntervalTraceBridgeModule" =>
       a.widgetConstructorKey.get.asInstanceOf[IntervalTraceBridgeKey] }.head
     val widget = LazyModule(new IntervalTraceBridgeModule(key))
-    new chisel3.stage.ChiselStage().emitVerilog(widget.module, Array("--target-dir", args(1)))
+    // Standalone, the widget's increment inputs are unsized and undriven, so emit
+    // CHIRRTL here; Golden Gate sizes them from the target channels in a real build.
+    val chirrtl = new chisel3.stage.ChiselStage().emitChirrtl(widget.module, Array("--target-dir", args(1)))
+    Files.writeString(Paths.get(args(1), "IntervalTraceBridgeModule.fir"), chirrtl)
     val header = new StringBuilder
     widget.module.genHeader(0, Map.empty, header)
     Files.writeString(Paths.get(args(1), "intervaltrace_generated.h"), header.toString)
-    println("PASS: Chisel 3 full widget elaboration, Verilog and driver header generation from Chisel 6 annotation")
+    println("PASS: Chisel 3 full widget elaboration and driver header generation from Chisel 6 annotation")
   }
 }

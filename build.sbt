@@ -119,7 +119,7 @@ lazy val scalaTestSettings =  Seq(
 
 // Subproject definitions begin
 
-// -- Standalone PMU (Rocket Chip does not depend on these projects) --
+// -- PMU --
 
 lazy val pmu_schema = (project in file("generators/pmu/schema"))
   .settings(commonSettings)
@@ -129,14 +129,10 @@ lazy val pmu = (project in file("generators/pmu"))
   .dependsOn(cde, pmu_schema)
   .settings(commonSettings)
   .settings(chiselSettings)
+  .settings(scalaTestSettings)
 
 lazy val pmu_tilelink = (project in file("generators/pmu/tilelink"))
   .dependsOn(pmu, rocketchip)
-  .settings(commonSettings)
-  .settings(chiselSettings)
-
-lazy val pmu_compiler = (project in file("tools/pmu"))
-  .dependsOn(pmu, firrtl2_bridge)
   .settings(commonSettings)
   .settings(chiselSettings)
 
@@ -196,7 +192,7 @@ lazy val chipyard = {
       icenet, tracegen,
       constellation, barf, shuttle, rerocc, tacit,
     ).map(sbt.Project.projectToRef) ++
-    (if (useChisel7) Seq() else Seq(sbt.Project.projectToRef(firrtl2_bridge), sbt.Project.projectToRef(pmu_compiler))) ++
+    (if (useChisel7) Seq() else Seq(sbt.Project.projectToRef(firrtl2_bridge))) ++
     (if (useChisel7) Seq() else Seq(sbt.Project.projectToRef(dsptools), sbt.Project.projectToRef(rocket_dsp_utils)))
 
   val baseDeps: Seq[sbt.ClasspathDep[sbt.ProjectReference]] =

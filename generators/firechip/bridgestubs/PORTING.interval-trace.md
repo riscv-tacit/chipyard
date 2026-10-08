@@ -8,24 +8,19 @@ on an arbitrary upstream Chipyard release; that needs a separate baseline test.
 
 ## Components
 
-- `generators/pmu/schema` holds the event manifest. `generators/pmu` depends on
-  Chisel and CDE, and provides a registry independently of native counters.
-  `generators/pmu/tilelink` adds Rocket Chip TileLink MMIO as an optional consumer.
-- `tools/pmu` validates inferred increment widths, producer/consumer wiring and
-  clock/reset domains. It uses `tools/firrtl2/bridge` (`firrtl2.bridge`), already
-  present in this tree. Chipyard commit `b20534fd` introduced the surrounding
-  Chisel 6 / FIRRTL2 integration; it includes unrelated baseline changes and is
-  not a minimal prerequisite patch. A different compiler baseline must provide
-  the equivalent adapter and phase ordering. Chisel 7 PMU generation is rejected.
+- `generators/pmu` is the PMU library: the per-tile event registry, the event
+  list, `CanHavePMUEvents`/`PMUEvents.bore()` for consumers outside the tile, and
+  the optional tile PMU with its TileLink register interface.
 - The BOOM commit registers events; it needs the PMU projects on its classpath.
-  The accompanying Chipyard PMU commit adds that dependency and stage hooks.
-  BOOM's own repository does not vendor the PMU library.
+  The accompanying Chipyard commit adds that dependency.
+- The bridge's increment ports are unsized; FIRRTL width inference sizes them
+  from the tile's increments, and the FPGA-side widget from the target channels.
 - The interval interface uses the existing architectural `TileTraceIO` and its
   conversion helpers. It does not require a TracerV bridge instance. The widget
   uses FireSim `HostPort`, `BridgeModule`, and `StreamToHostCPU`; the C++ driver
   uses the standard bridge/stream interfaces.
-- Chipyard IO/harness binders connect retirement and raw PMU increments. Native
-  PMU MMIO is optional. BOOM retirement is observed one accepted cycle after the
+- Chipyard IO/harness binders connect retirement and raw PMU increments. The tile
+  PMU is optional. BOOM retirement is observed one accepted cycle after the
   PMU events, so the bridge alignment is part of the integration contract.
 - Baremetal-IDE bindings and the FireMarshal/Speckle marker workloads are optional
   software consumers, separate from interval hardware and host accounting.
@@ -40,8 +35,8 @@ in the TACIT encoder solely to satisfy these references. Keep the terms in this
 fork: removing them here would change counter semantics when tracing stalls BOOM.
 
 Some patch context in `tile.scala` is adjacent to the existing trace encoders.
-Place registry finalization after all producer modules elaborate and before
-native-bank construction; the adjacent encoder code is not a PMU dependency.
+Build the registry after all producer modules elaborate and before the tile PMU;
+the adjacent encoder code is not a PMU dependency.
 Verify the selected BOOM revision's architectural retirement, original instruction
 bits, PC and exception semantics before reusing the binder's one-cycle latency.
 
@@ -63,9 +58,8 @@ Other FireSim platforms can use their own supported stream transport.
 
 ## Validation boundary
 
-The native compiler/RTL/MMIO/software tests, interval RTL/driver tests, metasim,
-and MegaBOOM F2 smoke/SPEC integer-speed captures exercise this integrated tree.
+The PMU unit, BOOM elaboration and tile PMU software tests, interval RTL/driver
+tests, and metasim exercise this integrated tree.
 Porting to a clean upstream tree still requires compiling its target and widget,
 checking retirement/PMU alignment, and running smoke before collecting workloads.
-The current driver emits compact version-2 interval JSONL and an append/flush
-block catalog; the older feature exporter does not consume this compact format.
+The driver emits interval JSONL version 2 and an append/flush block catalog.

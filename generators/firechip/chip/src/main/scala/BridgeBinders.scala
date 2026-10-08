@@ -129,27 +129,27 @@ class WithTracerVBridge extends HarnessBinder({
   }
 })
 
-/** Independent TracePort consumer; all PMU metadata is finalized by the target
-  * compiler before it reaches Golden Gate. No TracerV bridge is instantiated.
+/** Independent TracePort consumer, one interval trace bridge per traced tile.
+  * No TracerV bridge is instantiated.
   */
 class WithIntervalTraceBridge extends HarnessBinder({
   case (th: FireSim, port: TracePort, chipId: Int) => {
     require(port.pmuPorts.size == port.io.traces.size,
       s"Interval trace chip $chipId requires a PMU event port for every traced tile")
     port.io.traces.zip(port.pmuPorts).foreach { case (tile_trace, pmuPort) =>
-      DeferredIntervalTraceBridge.attach(tile_trace, pmuPort.manifest,
-        pmuPort.io.increments.toSeq, pmuPort.retirementLatency)
+      IntervalTraceBridge(tile_trace, pmuPort.manifest, pmuPort.io.increments.toSeq, pmuPort.retirementLatency)
     }
   }
 })
 
 /** Complete BOOM target-side feature: event collection, trace/PMU punchthrough,
-  * and the interval consumer. Native PMU MMIO can be enabled independently.
+  * and the interval consumer. A tile PMU can be enabled independently.
   */
 class WithBoomIntervalTrace extends Config(
   new WithIntervalTraceBridge ++
-  new chipyard.iobinders.WithPMUTraceIO ++
-  new boom.v3.common.WithBoomPMUEvents ++
+  // BOOM reports retirement one cycle after its PMU events.
+  new chipyard.iobinders.WithPMUTraceIO(retirementLatency = 1) ++
+  new boom.v3.common.WithPMUEvents ++
   new chipyard.config.WithTraceIO
 )
 

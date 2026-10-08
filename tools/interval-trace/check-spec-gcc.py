@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate a completed SPEC 602.gcc_s test capture and export interval features.
+"""Validate a completed SPEC 602.gcc_s test capture.
 
 Usage: check-spec-gcc.py RESULTS_JOB --spec-dir CPU2017_INSTALL
 RESULTS_JOB contains uartlog, intervaltrace-0 capture files, and collected output/.
@@ -7,11 +7,11 @@ RESULTS_JOB contains uartlog, intervaltrace-0 capture files, and collected outpu
 import argparse
 from collections import deque
 import csv
+import importlib.util
 import json
 import os
 from pathlib import Path
 import subprocess
-import sys
 
 
 def check(job, spec, capture_from_boot=False):
@@ -58,14 +58,14 @@ def check(job, spec, capture_from_boot=False):
                     assert row['kind'] == 'baseline'
                 nominal += row['kind'] == 'nominal'
             assert count >= 2 and row['kind'] == 'final'
-    # The streaming processor/decoder checks global record sequence, endpoint
-    # matching, BB/PMU totals, final records and vector alignment without loading
-    # the entire raw BB capture into memory.
-    processor = Path(__file__).with_name('process.py')
-    subprocess.run([sys.executable, str(processor), str(prefix)], check=True)
-    features = job / 'intervaltrace-0-features'
-    totals = json.loads((features / 'manifest.json').read_text())['totals']
-    assert totals['instructions'] > 0
+    # Interval JSONL version 2: block catalog, interval continuity, totals and PMU
+    # endpoints against retirement and cycles, for the single capture epoch.
+    spec_checker = importlib.util.spec_from_file_location(
+        'check_compact_capture', Path(__file__).with_name('check-compact-capture.py'))
+    checker = importlib.util.module_from_spec(spec_checker)
+    spec_checker.loader.exec_module(checker)
+    _, _, capture_epochs, totals = checker.check_capture(prefix, 1000000)
+    assert len(capture_epochs) == 1
     if detailed:
         assert totals['nominal_intervals'] == nominal
         assert totals['instructions'] == int(epochs[-1]['retired'])
@@ -100,29 +100,15 @@ def check(job, spec, capture_from_boot=False):
                         break
                     outside += int(block['instructions'])
                 assert found, ('marker missing at capture edge', kind, markers)
+        assert blocks == totals['bb_records'], 'BB records disagree with interval executions'
     else:
-        # The host decoder checked packet order and complete epoch shutdown
-        # before publishing this file. Dynamic edge order is deliberately not
-        # retained in interval-only captures; exact marker-edge validation is
-        # available with the opt-in record CSVs.
-        blocks = nominal = 0
-        with (features / 'intervals.jsonl').open() as stream:
-            for line in stream:
-                interval = json.loads(line)
-                assert interval['epoch'] == 1 and interval['nominal_interval'] == 1000000
-                assert interval['flags'] == (16 if interval['final'] else 0)
-                nominal += not interval['final']
-                blocks += sum(block[6] for block in interval['blocks'])
-                for event, endpoint in [('rob.instructions_retired', 'physical_retirements'),
-                                        ('tile.cycles', 'cycles')]:
-                    assert interval['counter_deltas'][names.index(event)] == interval[endpoint]
-        assert interval['final'] and totals['nominal_intervals'] == nominal
+        # Dynamic edge order is deliberately not retained in interval-only captures;
+        # exact marker-edge validation is available with the opt-in record CSVs.
         count = totals['intervals'] + 1  # Add the epoch baseline snapshot.
     summary = dict(passed=True, benchmark='602.gcc_s', input='test', nominal_interval=1000000,
                    capture_scope='boot-through-shutdown' if capture_from_boot else 'launcher-markers',
                    capture_edge_check='exact-records' if detailed else 'not-retained',
-                   pmu_snapshots=count, bb_records=blocks, capture=str(job),
-                   features=str(features), **totals)
+                   pmu_snapshots=count, capture=str(job), **totals)
     (job / 'validation.json').write_text(json.dumps(summary, indent=2) + '\n')
     print(json.dumps(summary, indent=2))
 

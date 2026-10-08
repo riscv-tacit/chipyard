@@ -195,7 +195,7 @@ void intervaltrace_t::write_features(const intervaltrace_features &features) {
   if (std::fflush(block_catalog_output) != 0)
     throw std::runtime_error("cannot flush interval trace block catalog");
   std::ostringstream record;
-  intervaltrace_write_features(record, features, &block_ids);
+  intervaltrace_write_features(record, features, block_ids);
   const auto data = record.str();
   if (std::fwrite(data.data(), 1, data.size(), interval_output) != data.size() ||
       std::fflush(interval_output) != 0)

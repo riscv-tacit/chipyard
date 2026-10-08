@@ -28,11 +28,7 @@ final class ChipyardChiselStage extends ChiselStage {
         Dependency[firrtl.stage.phases.Checks]
       )
     )
-    val elaborated = pm.transform(annotations :+ CIRCTTargetAnnotation(CIRCTTarget.CHIRRTL))
-    require(!elaborated.exists(a => a.isInstanceOf[pmu.PMUScopeAnnotation] || a.isInstanceOf[pmu.PMUEventAnnotation] ||
-      a.isInstanceOf[pmu.PMUConsumerAnnotation] || a.isInstanceOf[pmu.PMUMetadataConsumerAnnotation]),
-      "Native PMU validation currently requires the Chisel 6 / FIRRTL2 build (unset USE_CHISEL7)")
-    elaborated
+    pm.transform(annotations :+ CIRCTTargetAnnotation(CIRCTTarget.CHIRRTL))
   }
 }
 

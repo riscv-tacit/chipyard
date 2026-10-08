@@ -6,12 +6,11 @@
 #include <limits>
 #include <ostream>
 
-// The legacy writer remains available to the existing offline CSV processor.
-// Compact host captures use capture-local IDs from the incrementally written catalog.
+// Writes one interval in interval JSONL version 2. Blocks are referenced by their
+// capture-local IDs, which the driver defines in the incrementally written catalog.
 inline void intervaltrace_write_features(std::ostream &out, const intervaltrace_features &f,
-    const std::map<intervaltrace_block_key, uint64_t> *block_ids = nullptr) {
-  out << '{';
-  if (block_ids) out << "\"interval_format_version\":2,";
+    const std::map<intervaltrace_block_key, uint64_t> &block_ids) {
+  out << "{\"interval_format_version\":2,";
 #define FIELD(name) out << "\"" #name "\":" << f.name << ','
   FIELD(epoch); FIELD(snapshot_id); FIELD(nominal_interval);
   FIELD(start_retired); FIELD(end_retired); FIELD(start_cycle); FIELD(end_cycle);
@@ -40,10 +39,7 @@ inline void intervaltrace_write_features(std::ostream &out, const intervaltrace_
     comma = true;
     const auto &k = entry.first;
     const auto &v = entry.second;
-    out << '[';
-    if (block_ids) out << block_ids->at(k);
-    else out << k.start_pc << ',' << k.end_pc << ',' << k.privilege << ',' << k.partial_flags;
-    out << ',' << v.instructions << ',' << v.cycles << ',' << v.executions << ']';
+    out << '[' << block_ids.at(k) << ',' << v.instructions << ',' << v.cycles << ',' << v.executions << ']';
   }
   out << "]}\n";
 }

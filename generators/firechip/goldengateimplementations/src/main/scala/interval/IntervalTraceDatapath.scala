@@ -32,22 +32,26 @@ class IntervalPacketSerializer(packetBits: Int) extends Module {
   }
 }
 
-class IntervalTargetCycle(key: IntervalTraceBridgeKey) extends Bundle {
+/** incrementBits fixes every increment's width, for standalone elaboration in tests.
+  * Leave it empty in a bridge: width inference sizes increments from the target.
+  */
+class IntervalTargetCycle(key: IntervalTraceBridgeKey, incrementBits: Option[Int] = None) extends Bundle {
   val target_reset = Bool()
   val trace = new TraceBundle(key.traceWidths)
-  val increments = MixedVec(key.events.map(e => UInt(e.incrementBits.W)))
+  val increments = MixedVec(key.events.map(_ => incrementBits.map(b => UInt(b.W)).getOrElse(UInt())))
 }
 
 /** Match current PMU samples to a producer's delayed retirement observations.
   * The delay advances only on accepted target cycles, never on FPGA cycles.
   * Delaying reset too preserves the final retirement before a target reset.
   */
-class IntervalTraceAligner(key: IntervalTraceBridgeKey, discardInitialToken: Boolean = false) extends Module {
+class IntervalTraceAligner(key: IntervalTraceBridgeKey, discardInitialToken: Boolean = false,
+                           incrementBits: Option[Int] = None) extends Module {
   val io = IO(new Bundle {
-    val in = Flipped(Decoupled(new IntervalTargetCycle(key)))
-    val out = Decoupled(new IntervalTargetCycle(key))
+    val in = Flipped(Decoupled(new IntervalTargetCycle(key, incrementBits)))
+    val out = Decoupled(new IntervalTargetCycle(key, incrementBits))
   })
-  val sample = Wire(Decoupled(new IntervalTargetCycle(key)))
+  val sample = Wire(Decoupled(new IntervalTargetCycle(key, incrementBits)))
   sample <> io.in
   if (discardInitialToken) {
     // HostPort uses a latency-one PipeChannel, which injects a zero token
@@ -95,7 +99,7 @@ class IntervalBBState extends Bundle {
   * One accepted target cycle produces a bounded batch. No later target cycle
   * enters until every record in that batch has reached the common output FIFO.
   */
-class IntervalTraceDatapath(key: IntervalTraceBridgeKey) extends Module {
+class IntervalTraceDatapath(key: IntervalTraceBridgeKey, incrementBits: Option[Int] = None) extends Module {
   import IntervalTraceFormat._
   require(key.traceWidths.causeWidth == 64, "Interval trace initially requires an RV64 trace producer")
   private val lanes = key.traceWidths.retireWidth
@@ -103,7 +107,7 @@ class IntervalTraceDatapath(key: IntervalTraceBridgeKey) extends Module {
   private val pmuSlots = lanes max 1
   private val packetBits = pmuBeats(key.events.size) * beatBits
   val io = IO(new Bundle {
-    val target = Flipped(Decoupled(new IntervalTargetCycle(key)))
+    val target = Flipped(Decoupled(new IntervalTargetCycle(key, incrementBits)))
     val capture_enable = Input(Bool())
     // TracerV selector values: 0 always, 1 cycle window, 2 PCs, 3 masked instructions.
     // Instruction endpoints pack a 32-bit mask above a 32-bit instruction value.

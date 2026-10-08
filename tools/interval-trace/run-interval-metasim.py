@@ -2,6 +2,7 @@
 """Build a FireMarshal smoke image and run the interval bridge in local Verilator metasim."""
 import argparse
 import csv
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -9,12 +10,11 @@ import re
 import shlex
 import shutil
 import subprocess
-import sys
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 SIM = ROOT / 'sims/firesim/sim'
-OUT = ROOT / 'tools/pmu/target/interval-metasim'
+OUT = ROOT / 'tools/interval-trace/target/interval-metasim'
 WORKLOAD = ROOT / 'software/firemarshal/example-workloads/interval-trace-smoke.json'
 RECIPES = ROOT / 'sims/firesim-staging/sample_config_build_recipes.yaml'
 
@@ -27,27 +27,16 @@ def run(command, log, env, cwd=ROOT, timeout=None):
                        stdout=stream, stderr=subprocess.STDOUT, check=True, timeout=timeout)
 
 
-def check_pmu_endpoints(out):
-    live = out / 'intervaltrace-0-intervals.jsonl'
-    if live.exists():
-        catalog = json.loads((out / 'intervaltrace-0.json').read_text())
-        names = [event['name'] for event in catalog['events']]
-        count = nominal = 0
-        with live.open() as stream:
-            for line in stream:
-                row = json.loads(line)
-                count += 1
-                nominal += not row['final']
-                for event, endpoint in [('rob.instructions_retired', 'physical_retirements'), ('tile.cycles', 'cycles')]:
-                    if row['counter_deltas'][names.index(event)] != row[endpoint]:
-                        raise RuntimeError(f'{event} disagrees with {endpoint} at snapshot {row["snapshot_id"]}')
-        if not nominal or not count:
-            raise RuntimeError('expected nominal and final intervals')
-        subprocess.run([sys.executable, str(ROOT / 'tools/interval-trace/process.py'),
-                        str(out / 'intervaltrace-0')], check=True)
-        print(f'PASS: live interval features and PMU deltas agree at all {count} intervals')
-        if not (out / 'intervaltrace-0-pmu.csv').exists():
-            return
+def check_capture(out, interval):
+    # Interval JSONL version 2: block catalog, interval continuity, totals, PMU
+    # endpoints against retirement and cycles, and the smoke workload result.
+    spec = importlib.util.spec_from_file_location(
+        'check_compact_capture', Path(__file__).with_name('check-compact-capture.py'))
+    checker = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(checker)
+    checker.check(out, interval, smoke=True)
+    if not (out / 'intervaltrace-0-pmu.csv').exists():
+        return
     # The driver validates framing/integrity before emitting CSV. These two architectural
     # events independently check real BOOM routing and retirement alignment.
     catalog = json.loads((out / 'intervaltrace-0.json').read_text())
@@ -179,7 +168,7 @@ def main():
             out / 'decoder-build.log', env)
         run([decoder, out / 'intervaltrace-0.bin', len(catalog['events']), catalog['catalog_id']],
             out / 'decoder-check.log', env)
-    check_pmu_endpoints(out)
+    check_capture(out, args.interval)
     print(f'PASS: target workload, nonempty interval capture, and stream integrity; outputs in {out}')
 
 

@@ -7,14 +7,8 @@ import firesim.lib.bridgeutils._
 import firechip.bridgeinterfaces._
 import pmu.PMUManifest
 
-/** Target-only attachment data. Increments must be visible at the attachment,
-  * ordered by event ID, and already aligned to the tile trace's clock/reset and
-  * observation latency. This holder neither routes nor delays producer wires.
-  */
-case class IntervalPMUInputs(manifest: PMUManifest, increments: Seq[UInt])
-
-/** Target endpoint for a producer with a compiler-finalized event catalog.
-  * Live BOOM registries use DeferredIntervalTraceBridge for late finalization.
+/** Target endpoint for one tile's trace and PMU increments. Increment ports are
+  * unsized; width inference sizes them from the connected increments.
   */
 class IntervalTraceBridge(key: IntervalTraceBridgeKey) extends BlackBox
     with Bridge[HostPortIO[IntervalTraceBridgeTargetIO]] {
@@ -30,7 +24,7 @@ class IntervalTraceBridge(key: IntervalTraceBridgeKey) extends BlackBox
     key.traceWidths.retireWidth.toString, key.traceWidths.iaddrWidth.toString,
     key.traceWidths.insnWidth.toString, key.traceWidths.wdataWidth.toString,
     key.traceWidths.causeWidth.toString, key.traceWidths.tvalWidth.toString) ++ key.events.flatMap { event =>
-    Seq(event.id.toString, event.name, event.unit, event.description, event.incrementBits.toString)
+    Seq(event.id.toString, event.name, event.unit, event.description)
   }
   private val identity = identityFields.map(s => s"${s.length}:$s").mkString
   private val digest = java.security.MessageDigest.getInstance("SHA-256")
@@ -40,31 +34,26 @@ class IntervalTraceBridge(key: IntervalTraceBridgeKey) extends BlackBox
 }
 
 object IntervalTraceBridge {
-  /** Copy validated metadata only; provisional Scala widths are never a key. */
-  def key(manifest: PMUManifest, traceWidths: TraceBundleWidths, retirementLatency: Int = 0): IntervalTraceBridgeKey = {
-    require(manifest.finalized, "Interval bridge requires a compiler-finalized PMU manifest")
-    require(manifest.counterBits == 64, "Interval bridge initially uses 64-bit cumulative counters")
+  /** Key for a tile's event list. */
+  def key(manifest: PMUManifest, traceWidths: TraceBundleWidths, retirementLatency: Int = 0): IntervalTraceBridgeKey =
     IntervalTraceBridgeKey(manifest.source, traceWidths,
-      manifest.events.map(e => IntervalPMUEvent(e.id, e.name, e.unit, e.description, e.incrementBits.get)),
+      manifest.events.map(e => IntervalPMUEvent(e.id, e.name, e.unit, e.description)),
       retirementLatency = retirementLatency)
-  }
 
   /** Attach to the existing exported tile trace without instantiating TracerV.
-    * BOOM delays its retirement trace by one cycle; its PMU attachment must
-    * supply increments aligned to that observation, including reset handling.
+    * Increments are in event-ID order, in the tile trace's clock domain.
+    * retirementLatency is the number of cycles by which the trace's retirement
+    * lags the PMU increments; the FPGA widget aligns them.
     */
-  def apply(tile_trace: testchipip.cosim.TileTraceIO, pmuInputs: IntervalPMUInputs): IntervalTraceBridge = {
-    val bridgeKey = key(pmuInputs.manifest, ConvertTraceBundleWidths(tile_trace.traceBundleWidths))
-    require(pmuInputs.increments.size == bridgeKey.events.size, "Interval PMU input count mismatch")
-    pmuInputs.increments.zip(bridgeKey.events).foreach { case (increment, event) =>
-      require(increment.widthOption.contains(event.incrementBits),
-        s"Interval PMU input width mismatch for ${event.name}")
-    }
+  def apply(tile_trace: testchipip.cosim.TileTraceIO, manifest: PMUManifest, increments: Seq[UInt],
+            retirementLatency: Int): IntervalTraceBridge = {
+    val bridgeKey = key(manifest, ConvertTraceBundleWidths(tile_trace.traceBundleWidths), retirementLatency)
+    require(increments.size == bridgeKey.events.size, "Interval PMU input count mismatch")
     val interval_bridge = withClockAndReset(tile_trace.clock, tile_trace.reset) {
       Module(new IntervalTraceBridge(bridgeKey))
     }
     interval_bridge.io.tiletrace := ConvertTileTraceIO(tile_trace)
-    interval_bridge.io.increments.zip(pmuInputs.increments).foreach { case (sink, source) => sink := source }
+    interval_bridge.io.increments.zip(increments).foreach { case (sink, source) => sink := source }
     interval_bridge
   }
 }

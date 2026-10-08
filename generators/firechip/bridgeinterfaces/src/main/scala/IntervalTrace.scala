@@ -6,18 +6,16 @@ import chisel3._
 import chisel3.util.MixedVec
 import firrtl.annotations.HasSerializationHints
 
-/** Finalized event metadata crossing the Chipyard / Golden Gate JVM boundary.
+/** Event metadata crossing the Chipyard / Golden Gate JVM boundary.
   * This is a bridge constructor value, not a second event-registration API.
   */
-case class IntervalPMUEvent(id: Int, name: String, unit: String, description: String, incrementBits: Int) {
+case class IntervalPMUEvent(id: Int, name: String, unit: String, description: String) {
   require(id >= 0, "Interval PMU event ID must be nonnegative")
   require(name.trim.nonEmpty, "Interval PMU event name must be nonempty")
-  require(incrementBits > 0 && incrementBits <= 64, "Interval PMU increment width must be in [1, 64]")
 }
 
 /** One tile, one observation clock/reset, one ordered PMU catalog.
-  * Widths must already be resolved by PMU compiler validation. No Chisel handles
-  * or native PMU hardware types may be serialized in this key.
+  * No Chisel handles or PMU hardware types may be serialized in this key.
   */
 case class IntervalTraceBridgeKey(
   source: String,
@@ -46,9 +44,11 @@ case class IntervalTraceBridgeKey(
 /** PMU increments/reset describe the current target cycle; retirement may lag by
   * key.retirementLatency accepted cycles (BOOM uses one). The FPGA widget aligns
   * observations before accounting, including cycles with no retirement.
+  * Increment ports are unsized: FIRRTL width inference sizes them from the tile's
+  * increments on the target side, and from the target channels on the host side.
   * The host widget must consume trace, increments, and reset atomically through
   * HostPort. Simulation backpressure belongs to HostPort, not a DUT stall output.
-  * PMU inputs are raw increments, independent of native MMIO counting controls.
+  * PMU inputs are raw increments, independent of the tile PMU's counting controls.
   *
   * Reuse the tile trace also consumed by TracerV: valid means architectural
   * retirement; exception/interrupt are separate observations and may occur with
@@ -58,5 +58,5 @@ case class IntervalTraceBridgeKey(
   */
 class IntervalTraceBridgeTargetIO(key: IntervalTraceBridgeKey) extends Bundle {
   val tiletrace = Input(new TileTraceIO(key.traceWidths))
-  val increments = Input(MixedVec(key.events.map(e => UInt(e.incrementBits.W))))
+  val increments = Input(MixedVec(key.events.map(_ => UInt())))
 }

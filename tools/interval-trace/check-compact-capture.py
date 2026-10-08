@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate compact driver output without generating feature exports."""
+"""Validate an interval capture in JSONL version 2 and its workload results."""
 import argparse
 import csv
 import json
@@ -10,8 +10,12 @@ import re
 import subprocess
 
 
-def check(job, interval, smoke=False):
-    prefix = job / 'intervaltrace-0'
+def check_capture(prefix, interval):
+    """Validate one capture's catalog, block definitions and intervals (version 2).
+
+    Returns (names, definitions, epochs, totals). Requires a reset-free capture
+    whose intervals all have the given nominal length.
+    """
     assert not Path(str(prefix) + '-intervals.jsonl.partial').exists(), 'incomplete capture'
     catalog = json.loads(prefix.with_suffix('.json').read_text())
     names = [event['name'] for event in catalog['events']]
@@ -79,6 +83,12 @@ def check(job, interval, smoke=False):
             previous = f
     assert previous and previous['final'] and totals['instructions'] > 0
     assert referenced == set(definitions), 'unused catalog definitions'
+    return names, definitions, epochs, totals
+
+
+def check(job, interval, smoke=False):
+    prefix = job / 'intervaltrace-0'
+    names, definitions, epochs, totals = check_capture(prefix, interval)
     uart = (job / 'uartlog').read_text(errors='replace')
     assert '*** PASSED ***' in uart and 'IntervalTrace intervaltrace-0: error:' not in uart
     summaries = re.findall(r'IntervalTrace intervaltrace-0: epochs=(\d+), intervals=(\d+), BBs=(\d+) .*?resets=(\d+), instructions=(\d+), cycles=(\d+)', uart)
@@ -104,7 +114,6 @@ def check(job, interval, smoke=False):
                                stdout=log, stderr=subprocess.STDOUT,
                                env=dict(os.environ, SPEC=metadata['spec_dir']))
             comparisons += 1
-    assert not (job / 'intervaltrace-0-features').exists(), 'unexpected feature exports'
     result = dict(passed=True, benchmark=benchmark, interval_format_version=2, nominal_interval=interval,
                   block_definitions=len(definitions), epochs=epochs, comparisons=comparisons, capture=str(job), **totals)
     (job / 'validation.json').write_text(json.dumps(result, indent=2) + '\n')

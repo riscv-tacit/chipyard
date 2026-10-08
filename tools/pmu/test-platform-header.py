@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check source selection and reject ambiguous/invalid generated PMU bindings."""
+"""Check device matching and rejection of invalid generated PMU platform headers."""
 import copy
 import importlib.util
 from pathlib import Path
@@ -14,52 +14,66 @@ spec.loader.exec_module(module)
 
 class PlatformHeaderTest(unittest.TestCase):
     def setUp(self):
-        self.catalog = dict(schemaVersion=1, source='tile1', counterBits=64,
-                            finalized=True, events=[
-            dict(id=0, name='rob.retired', unit='instructions', incrementBits=3),
-            dict(id=1, name='tile.cycles', unit='cycles', incrementBits=1)])
-        self.platform = dict(soc={'ranges': [], 'pmu@40001000': {
-            'compatible': ['ucbbar,pmu-v1'], 'pmu,source': ['tile1'],
-            'reg': [dict(base=0x40001000, size=4096)]}})
+        self.manifest = dict(schemaVersion=2, source='tile1', events=[
+            dict(id=0, name='rob.retired', unit='instructions', description=''),
+            dict(id=1, name='tile.cycles', unit='cycles', description='')])
+        self.platform = dict(soc={'ranges': [],
+            'pmu@40000000': {
+                'compatible': ['ucbbar,pmu-v1'], 'pmu,source': ['tile0'], 'pmu,counter-bits': [48],
+                'reg': [dict(base=0x40000000, size=4096)]},
+            'pmu@40001000': {
+                'compatible': ['ucbbar,pmu-v1'], 'pmu,source': ['tile1'], 'pmu,counter-bits': [64],
+                'reg': [dict(base=0x40001000, size=4096)]}})
 
-    def emit(self, catalogs=None):
-        return module.generate(catalogs or [self.catalog], self.platform, 'tile1')
+    def emit(self):
+        return module.generate(self.manifest, self.platform)
 
-    def test_select_source_and_preserve_ids(self):
-        other = copy.deepcopy(self.catalog)
-        other['source'] = 'tile0'
-        header = self.emit([other, self.catalog])
+    def test_match_source_and_preserve_ids(self):
+        header = self.emit()
+        self.assertIn('#define TILE_PMU_SOURCE "tile1"', header)
         self.assertIn('UINT64_C(0x40001000)', header)
+        self.assertIn('#define TILE_PMU_COUNTER_COUNT 2u', header)
+        self.assertIn('#define TILE_PMU_COUNTER_BITS 64u', header)
         self.assertIn('X(ROB_RETIRED, 0, "rob.retired", "instructions")', header)
         self.assertIn('X(TILE_CYCLES, 1, "tile.cycles", "cycles")', header)
 
-    def test_source_must_have_native_mmio(self):
-        self.platform['soc']['pmu@40001000']['pmu,source'] = ['tile0']
-        with self.assertRaisesRegex(ValueError, 'native MMIO'):
+    def test_counter_bits_from_device_tree(self):
+        self.manifest['source'] = 'tile0'
+        self.assertIn('#define TILE_PMU_COUNTER_BITS 48u', self.emit())
+
+    def test_source_must_have_tile_pmu(self):
+        self.manifest['source'] = 'tile9'
+        with self.assertRaisesRegex(ValueError, 'exactly one tile PMU'):
             self.emit()
 
-    def test_duplicate_catalog(self):
-        with self.assertRaisesRegex(ValueError, 'exactly one catalog'):
-            self.emit([self.catalog, self.catalog])
+    def test_schema_version(self):
+        self.manifest['schemaVersion'] = 1
+        with self.assertRaisesRegex(ValueError, 'schema-v2'):
+            self.emit()
 
-    def test_finalized_required(self):
-        self.catalog['finalized'] = False
-        with self.assertRaisesRegex(ValueError, 'finalized'):
+    def test_counter_bits_required(self):
+        del self.platform['soc']['pmu@40001000']['pmu,counter-bits']
+        with self.assertRaisesRegex(ValueError, 'pmu,counter-bits'):
+            self.emit()
+
+    def test_counter_bits_range(self):
+        self.platform['soc']['pmu@40001000']['pmu,counter-bits'] = [65]
+        with self.assertRaisesRegex(ValueError, 'pmu,counter-bits'):
             self.emit()
 
     def test_identifier_collision(self):
-        self.catalog['events'][1]['name'] = 'ROB_RETIRED'
+        self.manifest['events'][1]['name'] = 'ROB_RETIRED'
         with self.assertRaisesRegex(ValueError, 'collide'):
             self.emit()
 
     def test_bad_ids(self):
-        self.catalog['events'][1]['id'] = 3
-        with self.assertRaisesRegex(ValueError, 'dense and ordered'):
+        self.manifest['events'][1]['id'] = 3
+        with self.assertRaisesRegex(ValueError, 'positions'):
             self.emit()
 
-    def test_bad_aperture(self):
+    def test_bad_region(self):
         self.platform['soc']['pmu@40001000']['reg'][0]['size'] = 128
-        with self.assertRaisesRegex(ValueError, 'aperture'):
+        with self.assertRaisesRegex(ValueError, 'region'):
             self.emit()
 
     def test_no_implicit_bus_translation(self):

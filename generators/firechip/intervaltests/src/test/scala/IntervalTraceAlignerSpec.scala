@@ -9,7 +9,7 @@ import org.scalatest.flatspec.AnyFlatSpec
 class IntervalTraceAlignerSpec extends AnyFlatSpec with ChiselScalatestTester {
   private def key(latency: Int) = IntervalTraceBridgeKey("tile",
     TraceBundleWidths(1, 40, 32, None, 64, 40),
-    Seq(IntervalPMUEvent(0, "retired", "instructions", "Retirements", 3)), retirementLatency = latency)
+    Seq(IntervalPMUEvent(0, "retired", "instructions", "Retirements")), retirementLatency = latency)
 
   private def drive(dut: IntervalTraceAligner, increment: Int, targetReset: Boolean, pc: Int): Unit = {
     dut.io.in.valid.poke(true.B)
@@ -22,7 +22,7 @@ class IntervalTraceAlignerSpec extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   "Retirement alignment" should "advance on accepted target cycles and preserve the pre-reset retirement" in {
-    test(new IntervalTraceAligner(key(1))) { dut =>
+    test(new IntervalTraceAligner(key(1), incrementBits = Some(3))) { dut =>
       // First token has no prior PMU sample; it only seeds the alignment stage.
       dut.io.out.ready.poke(false.B)
       drive(dut, 2, false, 0)
@@ -57,7 +57,7 @@ class IntervalTraceAlignerSpec extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "pass through a producer with no retirement latency" in {
-    test(new IntervalTraceAligner(key(0))) { dut =>
+    test(new IntervalTraceAligner(key(0), incrementBits = Some(3))) { dut =>
       drive(dut, 4, true, 0x100)
       dut.io.out.ready.poke(false.B)
       dut.io.in.ready.expect(false.B); dut.io.out.valid.expect(true.B)
@@ -70,7 +70,7 @@ class IntervalTraceAlignerSpec extends AnyFlatSpec with ChiselScalatestTester {
 
   for (latency <- Seq(0, 1)) {
     it should s"discard HostPort initialization before aligning latency $latency" in {
-      test(new IntervalTraceAligner(key(latency), discardInitialToken = true)) { dut =>
+      test(new IntervalTraceAligner(key(latency), discardInitialToken = true, incrementBits = Some(3))) { dut =>
         dut.io.out.ready.poke(false.B)
         drive(dut, 0, false, 0)
         dut.io.in.valid.poke(false.B)

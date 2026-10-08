@@ -19,13 +19,13 @@ for entry in classpath:
 env = dict(os.environ, PATH=str(ROOT / '.conda-env/bin') + os.pathsep + os.environ['PATH'])
 
 # Separate JVMs match normal Chipyard generation and avoid global generator state.
-for config, scopes, count_bits in [('DualSmallBoomV3PMUConfig', 2, 1),
-                                   ('MediumBoomV3PMUConfig', 1, 2),
-                                   ('SmallBoomV3Config', 0, 1)]:
+for config, scopes in [('DualSmallBoomV3PMUConfig', 2),
+                       ('MediumBoomV3PMUConfig', 1),
+                       ('SmallBoomV3Config', 0)]:
     output = OUT / config
     output.mkdir(parents=True, exist_ok=True)
-    manifest = output / f'{config}.pmu.json'
-    manifest.unlink(missing_ok=True)
+    for stale in output.glob(f'{config}*.pmu.json'):
+        stale.unlink()
     log_path = output / 'elaboration.log'
     print(f'Elaborating {config}; log: {log_path}', flush=True)
     with log_path.open('w') as log:
@@ -38,7 +38,7 @@ for config, scopes, count_bits in [('DualSmallBoomV3PMUConfig', 2, 1),
     if result.returncode:
         raise SystemExit(f'{config} failed (exit {result.returncode}); see {log_path}')
     annotations = json.loads((output / f'{config}.anno.json').read_text())
-    assert not any(a.get('class', '').startswith('pmu.') for a in annotations)
+    assert not any('pmu' in a.get('class', '').lower() for a in annotations), 'PMU annotations reached the output'
     circuit = (output / f'{config}.fir').read_text()
     banks = re.findall(r'\binst \w+ of TilePMU(?:_\d+)?\b', circuit)
     assert len(banks) == scopes, (config, len(banks))
@@ -50,6 +50,7 @@ for config, scopes, count_bits in [('DualSmallBoomV3PMUConfig', 2, 1),
         assert node, f'Missing PMU node at {base:#x}'
         assert f'pmu,source = "boom_tile_{tile}"' in node.group(1)
         assert f'reg = <0x{base:x} 0x1000>' in node.group(1)
+        assert re.search(r'pmu,counter-bits = <(0x40|64)>', node.group(1)), node.group(1)
         paths = list(output.glob(f'{config}.0x{base:x}.*.regmap.json'))
         assert len(paths) == 1, paths
         peripheral = json.loads(paths[0].read_text())['peripheral']
@@ -66,19 +67,21 @@ for config, scopes, count_bits in [('DualSmallBoomV3PMUConfig', 2, 1),
                 field = fields[f'counter_{event}_{suffix}']
                 assert location(field) == (0x100 + event * 8 + displacement) * 8
                 assert field['bitWidth'] == 32 and field['accessType'] == 'R'
+    manifests = sorted(output.glob(f'{config}.*.pmu.json'))
+    assert [m.name for m in manifests] == [f'{config}.boom_tile_{i}.pmu.json' for i in range(scopes)], manifests
     if scopes:
-        catalogs = json.loads(manifest.read_text())
+        catalogs = [json.loads(m.read_text()) for m in manifests]
         assert [m['source'] for m in catalogs] == [f'boom_tile_{i}' for i in range(scopes)]
         for catalog in catalogs:
-            assert catalog['finalized'] and catalog['counterBits'] == 64
+            assert set(catalog) == {'schemaVersion', 'source', 'events'} and catalog['schemaVersion'] == 2
             expected = {
-                'rob.instructions_retired': ('instructions', count_bits),
-                'pipeline.dispatched_uops': ('uops', count_bits),
-                'branch.mispredict_redirects': ('redirects', 1),
-                **{name: ('requests', 1) for name in [
+                'rob.instructions_retired': 'instructions',
+                'pipeline.dispatched_uops': 'uops',
+                'branch.mispredict_redirects': 'redirects',
+                **{name: 'requests' for name in [
                     'frontend.icache_line_misses', 'frontend.itlb_walk_requests',
                     'lsu.dcache_line_misses', 'lsu.dtlb_walk_requests']},
-                **{name: ('cycles', 1) for name in [
+                **{name: 'cycles' for name in [
                     'tile.cycles', 'pipeline.frontend_starved_cycles',
                     'pipeline.backend_blocked_cycles', 'pipeline.redirect_blocked_cycles',
                     'pipeline.rob_blocked_cycles', 'pipeline.rename_blocked_cycles',
@@ -87,10 +90,9 @@ for config, scopes, count_bits in [('DualSmallBoomV3PMUConfig', 2, 1),
                     'rob.head_load_wait_cycles', 'rob.nonempty_no_retire_cycles']}}
             assert len(catalog['events']) == 19
             assert [e['id'] for e in catalog['events']] == list(range(19))
-            actual = {e['name']: (e['unit'], e['incrementBits']) for e in catalog['events']}
+            assert [e['name'] for e in catalog['events']] == sorted(expected), 'Event IDs are not in name order'
+            actual = {e['name']: e['unit'] for e in catalog['events']}
             assert actual == expected, (config, actual)
             assert all(e['description'] for e in catalog['events'])
-        assert all(c['events'] == catalogs[0]['events'] for c in catalogs), 'Per-tile catalogs differ'
-    else:
-        assert not manifest.exists(), 'Disabled PMU emitted a manifest'
-    print(f'PASS: {config}: {scopes} native banks, expected manifests, MMIO maps and exported annotations', flush=True)
+        assert all(c['events'] == catalogs[0]['events'] for c in catalogs), 'Per-tile event lists differ'
+    print(f'PASS: {config}: {scopes} tile PMUs, per-tile event lists, MMIO maps, no PMU annotations', flush=True)

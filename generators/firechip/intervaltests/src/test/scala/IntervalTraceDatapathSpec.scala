@@ -15,11 +15,13 @@ class IntervalTraceDatapathSpec extends AnyFlatSpec with ChiselScalatestTester {
   private case class Slot(pc: BigInt, insn: BigInt = 0x13, priv: Int = 3)
   private case class Cycle(slots: Seq[Option[Slot]], increments: Seq[BigInt], trap: Boolean = false, reset: Boolean = false)
   private case class Record(kind: Int, flags: Int, words: Vector[BigInt])
-  private def key(lanes: Int, counters: Int): IntervalTraceBridgeKey = IntervalTraceBridgeKey("test_tile",
+  // stall: event ID of a cycle event named as the key's stall event.
+  private def key(lanes: Int, counters: Int, stall: Option[Int] = None): IntervalTraceBridgeKey = IntervalTraceBridgeKey("test_tile",
     TraceBundleWidths(lanes, 40, 32, None, 64, 40),
-    (0 until counters).map(i => IntervalPMUEvent(i, s"event_$i", "events", "Test event")))
+    (0 until counters).map(i => IntervalPMUEvent(i, s"event_$i", if (stall.contains(i)) "cycles" else "events", "Test event")),
+    stallEvent = stall.map(i => s"event_$i"))
 
-  private def decode(beats: Seq[BigInt], n: Int): Vector[Record] = {
+  private def decode(beats: Seq[BigInt], n: Int, bbCount: Int = 4): Vector[Record] = {
     val words = beats.flatMap(b => (0 until 8).map(i => (b >> (64 * i)) & mask64))
     val records = ArrayBuffer.empty[Record]
     var offset = 0
@@ -28,7 +30,7 @@ class IntervalTraceDatapathSpec extends AnyFlatSpec with ChiselScalatestTester {
       val kind = (h & 255).toInt
       assert(((h >> 8) & 255) == version)
       val count = (h >> 32).toInt
-      assert(count == (if (kind == pmu) n + 4 else 4))
+      assert(count == (if (kind == pmu) n + 4 else if (kind == bb) bbCount else 4))
       val padded = ((1 + count + 7) / 8) * 8
       assert(offset + padded <= words.size, "truncated record")
       assert(words.slice(offset + 1 + count, offset + padded).forall(_ == 0), "nonzero padding")
@@ -89,7 +91,7 @@ class IntervalTraceDatapathSpec extends AnyFlatSpec with ChiselScalatestTester {
       tick()
       dut.io.target.valid.poke(false.B)
     }
-    def stop(): Unit = {
+    def stop(fixture: String = s"rtl-${bridgeKey.events.size}"): Unit = {
       dut.io.capture_enable.poke(false.B)
       dut.io.target.valid.poke(false.B)
       while (!dut.io.drained.peek().litToBoolean) tick()
@@ -98,8 +100,9 @@ class IntervalTraceDatapathSpec extends AnyFlatSpec with ChiselScalatestTester {
       val out = Paths.get("generators/firechip/intervaltests/target")
       Files.createDirectories(out)
       val bytes = beats.flatMap(b => (0 until 64).map(i => ((b >> (8 * i)) & 255).toByte)).toArray
-      Files.write(out.resolve(s"rtl-${bridgeKey.events.size}.bin"), bytes)
-      Files.writeString(out.resolve(s"rtl-${bridgeKey.events.size}.catalog"), catalogId(bridgeKey).toString)
+      Files.write(out.resolve(s"$fixture.bin"), bytes)
+      Files.writeString(out.resolve(s"$fixture.catalog"), catalogId(bridgeKey).toString)
+      bridgeKey.stallIndex.foreach(i => Files.writeString(out.resolve(s"$fixture.stall"), i.toString))
     }
   }
 
@@ -117,14 +120,18 @@ class IntervalTraceDatapathSpec extends AnyFlatSpec with ChiselScalatestTester {
     var retired = 0
     var cycle = 0
     var lastBoundaryCycle = 0
+    var lastBoundaryStall = BigInt(0)
     var nextThreshold = length
     var id = 0
     def sext(pc: BigInt): BigInt = if (pc.testBit(39)) pc | (mask64 ^ ((BigInt(1) << 40) - 1)) else pc
     def block(extra: Int): Record = {
+      // Stall cycles since the previous boundary, from the cumulative stall counter.
+      val stall = k.stallIndex.map(i => (counters(i) - lastBoundaryStall) & mask64)
       val r = Record(bb, extra | (if (partial) partialStart else 0) | (pending.head.priv << privilegeShift),
-        Vector(sext(pending.head.pc), sext(pending.last.pc), BigInt(pending.size), BigInt(cycle - lastBoundaryCycle)))
+        Vector(sext(pending.head.pc), sext(pending.last.pc), BigInt(pending.size), BigInt(cycle - lastBoundaryCycle)) ++ stall)
       pending = Vector.empty
       lastBoundaryCycle = cycle
+      k.stallIndex.foreach(i => lastBoundaryStall = counters(i))
       partial = false
       r
     }
@@ -480,6 +487,67 @@ class IntervalTraceDatapathSpec extends AnyFlatSpec with ChiselScalatestTester {
       assert(boundaries.size == 1 && boundaries.head.words(1) == 2)
       assert(boundaries.head.words.drop(4) == Vector(BigInt(102), BigInt(103)))
       assert(records.head.words(1) == 2)
+    }
+  }
+
+  "Stall accounting" should "give each block the stall cycles since its previous boundary, for several stalled blocks per interval" in {
+    val k = key(2, 3, Some(1))
+    val wfi = 0x10500073
+    def cycle(slots: Seq[Option[Slot]], stall: Int, trap: Boolean = false): Cycle =
+      Cycle(slots, Seq(BigInt(slots.flatten.size), BigInt(stall), BigInt(1)), trap)
+    val input = Seq(
+      cycle(Seq(Some(Slot(0x1000))), 0),
+      cycle(Seq.empty, 1), cycle(Seq.empty, 1), // first sleep
+      cycle(Seq(Some(Slot(0x1004, wfi))), 0, trap = true), // WFI retires; the wake-up trap ends its block
+      cycle(Seq(Some(Slot(0x3000, 0x63))), 0),
+      cycle(Seq.empty, 1), // second sleep: a different block in the same interval
+      cycle(Seq(Some(Slot(0x2000, wfi))), 0, trap = true),
+      // Two blocks end in one stalled cycle: the first takes it, as for elapsed cycles.
+      cycle(Seq(Some(Slot(0x3000, 0x63)), Some(Slot(0x3004, 0x63))), 1),
+      cycle(Seq(Some(Slot(0x4000))), 0),
+      cycle(Seq.empty, 1), cycle(Seq.empty, 1)) // stall in a block still open at host stop
+    test(new IntervalTraceDatapath(k, incrementBits = Some(64))).withAnnotations(Seq(firrtl2.options.TargetDirAnnotation(
+      "generators/firechip/intervaltests/target/stall"))) { dut =>
+      val driver = new Driver(dut, k, 137)
+      driver.start(6)
+      input.foreach(driver.send)
+      driver.stop("rtl-stall-cases")
+      val records = decode(driver.beats.toSeq, 3, 5)
+      assert(records == reference(input, k, 6))
+      val blocks = records.filter(_.kind == bb)
+      assert(blocks.map(_.words(4)) == Vector(2, 0, 1, 1, 0, 2).map(BigInt(_)))
+      // Both stalled blocks fall in the first interval, which the second branch at 0x3004 closes.
+      assert(blocks.indexWhere(r => (r.flags & terminateInterval) != 0) == 4)
+      assert(blocks.map(_.words(4)).sum == records.filter(r => r.kind == pmu && (r.flags & finalSnapshot) != 0).head.words(4 + 1))
+    }
+  }
+
+  it should "match the software reference with random stalls, traps, privilege changes and PC discontinuities" in {
+    val k = key(4, 18, Some(5))
+    val random = new Random(53)
+    var pc = BigInt("fffffff000", 16)
+    val input = (0 until 120).map { cycle =>
+      val slots = (0 until 4).map { lane =>
+        if (random.nextInt(3) != 0) None else {
+          if (cycle % 9 == 0 && lane == 2) pc += 0x100
+          val word = Vector(0x13, 0x1, 0x63, 0x6f, 0xa001, 0xc001, 0x8082, 0x10500073)(random.nextInt(8))
+          val s = Slot(pc, word, if (cycle % 13 < 6) 3 else 0)
+          pc += (if ((word & 3) == 3) 4 else 2)
+          Some(s)
+        }
+      }
+      val stall = if (slots.flatten.isEmpty && random.nextBoolean()) 1 else 0
+      Cycle(slots, Vector.tabulate(18)(i => if (i == 5) BigInt(stall) else BigInt(i + 3)), trap = cycle % 11 == 0)
+    }
+    test(new IntervalTraceDatapath(k, incrementBits = Some(64))).withAnnotations(Seq(firrtl2.options.TargetDirAnnotation(
+      "generators/firechip/intervaltests/target/stall-random"))) { dut =>
+      val driver = new Driver(dut, k, 19)
+      driver.start(7)
+      input.foreach(driver.send)
+      driver.stop("rtl-stall")
+      val records = decode(driver.beats.toSeq, 18, 5)
+      assert(records == reference(input, k, 7))
+      assert(records.exists(r => r.kind == bb && r.words(4) > 0))
     }
   }
 

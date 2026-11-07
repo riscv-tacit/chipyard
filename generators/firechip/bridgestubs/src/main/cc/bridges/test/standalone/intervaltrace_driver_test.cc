@@ -105,11 +105,13 @@ private:
 };
 
 int main(int argc, char **argv) {
-  assert(argc == 5);
+  // Arguments: output directory, stream, counter count, catalog ID and, optionally, the stall event ID.
+  assert(argc == 5 || argc == 6);
   const std::filesystem::path out(argv[1]);
   const auto bytes = read_file(argv[2]);
   const unsigned counters = std::stoul(argv[3]);
   const uint64_t catalog = std::stoull(argv[4]);
+  const int64_t stall = argc == 6 ? std::stoll(argv[5]) : -1;
   const std::string manifest = "{\"test_catalog\":true}";
   std::vector<std::string> event_names;
   for (unsigned i = 0; i < counters; ++i) event_names.push_back("event_" + std::to_string(i));
@@ -127,7 +129,7 @@ int main(int argc, char **argv) {
     if (raw) options.push_back("+interval-trace-trigger");
     MockSim sim;
     MockEngine stream(bytes, sim);
-    intervaltrace_t driver(sim, stream, addrs, 7, options, 0, 16, counters, catalog, manifest.c_str(), event_names);
+    intervaltrace_t driver(sim, stream, addrs, 7, options, 0, 16, counters, catalog, manifest.c_str(), event_names, stall);
     Diagnostics messages;
     // Reusing a prefix must not leave an old successful output on failure.
     { std::ofstream previous(out / (name + "-7-intervals.jsonl")); previous << "old"; }
@@ -144,7 +146,7 @@ int main(int argc, char **argv) {
     assert(std::count(live_catalog.begin(), live_catalog.end(), '\n') > 1);
     assert(!live_intervals.empty() && live_intervals.back() == '\n');
     const std::string live_text(live_intervals.begin(), live_intervals.end());
-    assert(live_text.find("\"interval_format_version\":2") != std::string::npos);
+    assert(live_text.find("\"interval_format_version\":3") != std::string::npos);
     driver.finish();
     assert(!driver.terminate() && driver.exit_code() == 0);
     assert(stream.input().flushed && stream.input().position == bytes.size());
@@ -161,6 +163,7 @@ int main(int argc, char **argv) {
     assert(summary.find("warning:") == std::string::npos);
     assert(summary.find("epochs=") != std::string::npos && summary.find("partial=") != std::string::npos);
     assert(summary.find("bytes=" + std::to_string(bytes.size())) != std::string::npos);
+    assert((summary.find("stall_cycles=") != std::string::npos) == (stall >= 0));
     const auto write_count = sim.writes.size();
     driver.finish(); driver.tick();
     assert(messages.text() == summary && sim.writes.size() == write_count);
@@ -168,7 +171,7 @@ int main(int argc, char **argv) {
   {
     MockSim sim;
     MockEngine stream({}, sim);
-    intervaltrace_t driver(sim, stream, addrs, 0, args("empty"), 0, 16, counters, catalog, manifest.c_str(), event_names);
+    intervaltrace_t driver(sim, stream, addrs, 0, args("empty"), 0, 16, counters, catalog, manifest.c_str(), event_names, stall);
     Diagnostics messages;
     driver.init(); driver.finish(); driver.finish();
     const auto text = messages.text();
@@ -181,7 +184,7 @@ int main(int argc, char **argv) {
     MockEngine stream({}, sim);
     auto disabled_args = args("disabled");
     disabled_args.push_back("+interval-trace-disable");
-    intervaltrace_t driver(sim, stream, addrs, 0, disabled_args, 0, 16, counters, catalog, manifest.c_str(), event_names);
+    intervaltrace_t driver(sim, stream, addrs, 0, disabled_args, 0, 16, counters, catalog, manifest.c_str(), event_names, stall);
     Diagnostics messages;
     driver.init(); driver.tick(); driver.finish();
     assert(messages.text().empty());
@@ -197,7 +200,7 @@ int main(int argc, char **argv) {
     auto options = args(name);
     options.push_back("+interval-trace-raw");
     options.push_back("+interval-trace-csv");
-    intervaltrace_t driver(sim, stream, addrs, 0, options, 0, 16, counters, catalog, manifest.c_str(), event_names);
+    intervaltrace_t driver(sim, stream, addrs, 0, options, 0, 16, counters, catalog, manifest.c_str(), event_names, stall);
     Diagnostics messages;
     driver.init(); driver.tick();
     if (!late) assert(driver.terminate() && driver.exit_code() == 1);
@@ -229,7 +232,7 @@ int main(int argc, char **argv) {
     MockEngine stream({}, sim);
     auto options = args(("trigger-" + std::to_string(i)).c_str());
     options.insert(options.end(), trigger_options[i].begin(), trigger_options[i].end());
-    intervaltrace_t driver(sim, stream, addrs, 0, options, 0, 16, counters, catalog, manifest.c_str(), event_names);
+    intervaltrace_t driver(sim, stream, addrs, 0, options, 0, 16, counters, catalog, manifest.c_str(), event_names, stall);
     Diagnostics messages;
     driver.init();
     for (size_t j = 0; j < 5; ++j)
@@ -252,7 +255,7 @@ int main(int argc, char **argv) {
     MockEngine stream({}, sim);
     auto options = args("bad-trigger");
     options.insert(options.end(), extra.begin(), extra.end());
-    rejects([&] { intervaltrace_t driver(sim, stream, addrs, 0, options, 0, 16, counters, catalog, manifest.c_str(), event_names); });
+    rejects([&] { intervaltrace_t driver(sim, stream, addrs, 0, options, 0, 16, counters, catalog, manifest.c_str(), event_names, stall); });
     assert(sim.writes.empty());
   }
   {
@@ -260,7 +263,7 @@ int main(int argc, char **argv) {
     MockSim sim;
     MockEngine stream(bytes, sim);
     intervaltrace_t driver(sim, stream, addrs, 0, args("full-catalog"), 0, 16, counters, catalog,
-                          manifest.c_str(), event_names);
+                          manifest.c_str(), event_names, stall);
     rejects([&] { driver.init(); });
     assert(sim.writes.empty());
   }
@@ -273,7 +276,7 @@ int main(int argc, char **argv) {
     auto options = args(name.c_str());
     options.push_back("+interval-trace-raw");
     options.push_back("+interval-trace-csv");
-    intervaltrace_t driver(sim, stream, addrs, 0, options, 0, 16, counters, catalog, manifest.c_str(), event_names);
+    intervaltrace_t driver(sim, stream, addrs, 0, options, 0, 16, counters, catalog, manifest.c_str(), event_names, stall);
     Diagnostics messages;
     driver.init(); driver.tick();
     rejects([&] { driver.finish(); });

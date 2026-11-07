@@ -35,6 +35,15 @@ by tile identity. The default interval configs add no tile PMU. Compose BOOM's
 `WithTilePMU` as well to add one; its enable/clear/snapshot controls do not affect
 tracing.
 
+`WithPMUTraceIO(retirementLatency, stallEvent)` can also name a **stall event**: a
+one-bit cycle event during which the core is stalled without advancing its own
+cycle counter. `WithBoomIntervalTrace` names BOOM's `csr.stall_cycles`, which
+counts cycles with `csr_stall` asserted: from a WFI until an interrupt is pending
+(or after CEASE). Rocket's CSR file, which BOOM v3 uses, holds `mcycle` and commit
+during exactly these cycles; the tile clock keeps running. The bridge key carries
+the event's name; it must be in the catalog with unit `cycles`, and the target-side
+`IntervalTraceBridge.apply` checks that its increment is one bit wide.
+
 The bridge key carries each tile's event list (ID, name, unit and description).
 The bridge's increment ports are unsized on both sides. On the target side, FIRRTL
 width inference sizes them from the tile's increments while Golden Gate lowers the
@@ -91,6 +100,11 @@ A BB's elapsed cycles run from the preceding BB boundary through its own boundar
 The first BB ending in a target cycle receives elapsed time; later BBs get zero.
 Instruction counts stop at the actual retirement slot. This is elapsed-time
 accounting, not causal attribution of individual pipeline events.
+
+With a stall event, each BB also carries its stall cycles: the stall counter's
+increase from the preceding BB boundary through its own, under the same
+first-BB-per-cycle convention. Because a stall holds commit, a WFI's stall cycles
+fall in the BB containing that WFI, however many stalled BBs an interval holds.
 
 Interval arithmetic retains `count + drift`, incrementing it per retired
 instruction and subtracting the nominal length exactly once at each eligible
@@ -215,7 +229,7 @@ Header is word 0: bits 7:0 type, 15:8 version, 31:16 flags, 63:32 payload word c
 
 | Type | Payload words, in order | Size |
 | --- | --- | --- |
-| 1: BB | start PC, end PC, instruction count, elapsed cycles | One 512-bit beat |
+| 1: BB | start PC, end PC, instruction count, elapsed cycles, and stall cycles when the key names a stall event | One 512-bit beat |
 | 2: PMU | snapshot ID, logical boundary retirement count, cycle end, whole-cycle retirement count, counters in catalog order | `ceil((5 + counterCount) / 8)` beats |
 | 3: Epoch start | epoch ID, nominal interval, counter count, catalog ID | One beat |
 | 4: Epoch end | epoch ID, total retired, elapsed cycles, final snapshot ID | One beat |
@@ -233,6 +247,9 @@ Flag bits within the 16-bit flags field:
 | 7 | Unexpected PC discontinuity caused partial closure |
 | 8 | Privilege change caused partial closure |
 | 15:13 | BB privilege/debug value from the original three-bit trace field |
+
+The catalog ID and the companion JSON's `stall_event` identify whether BBs carry
+the fifth word; the header's payload count must agree.
 
 Epoch IDs begin at 1; baseline snapshot ID is 0. Nominal snapshots increment IDs;
 the final snapshot consumes the next ID. Baselines and final snapshots are not
@@ -257,7 +274,7 @@ and aggregates each interval directly. Its default outputs are:
 - `intervaltrace-0.json`: the existing PMU/wire catalog (wire format version 1).
 - `intervaltrace-0-blocks.csv`: capture-local, one-based block IDs and definitions:
   `id,start_pc,end_pc,privilege,partial_start,partial_end`. PCs are hexadecimal.
-- `intervaltrace-0-intervals.jsonl`: `interval_format_version: 2` records containing
+- `intervaltrace-0-intervals.jsonl`: `interval_format_version: 3` records containing
   `[block_id,instructions,cycles,executions]` block entries, PMU deltas, endpoints,
   and IPC. IDs remain stable across intervals and epochs in the same capture.
   See [Interval JSONL format](#interval-jsonl-format).
@@ -275,10 +292,24 @@ and the smoke or SPEC workload results.
 
 ### Interval JSONL format
 
+#### Version 3
+
+Version 3 has exactly the fields of version 2. When the catalog
+(`intervaltrace-0.json`) names a `stall_event`, every cycle field excludes stall
+cycles: a block's `cycles` are its elapsed cycles minus its stall cycles, and
+`start_cycle`/`end_cycle` are snapshot cycles minus the cumulative stall counter, so
+`cycles`, `attributed_cycles`, `unattributed_cycles` and `ipc` all count busy
+cycles and every identity below still holds. Elapsed (wall) time stays available
+per interval in `counter_deltas`: `tile.cycles`' delta is `cycles` plus the stall
+event's delta. Before subtracting, the driver checks that the BBs' stall cycles
+equal the stall counter at every interval snapshot. Without a stall event,
+version 3 is numerically identical to version 2.
+
 #### Version 2
 
 `intervaltrace-0-intervals.jsonl` holds one JSON object per line, one per interval,
-in capture order. Every record starts with `"interval_format_version": 2`.
+in capture order. Every record starts with `"interval_format_version": 2` (3 in
+current captures).
 
 | Field | Meaning |
 |---|---|
@@ -337,7 +368,9 @@ order of first appearance gives the version 2 block IDs.
 With `+interval-trace-csv`, the additional files are:
 
 - `intervaltrace-0-bb.csv`: start/end PCs (hex), instruction count, elapsed cycles,
-  interval/partial flags, privilege, and the complete numeric flag word.
+  interval/partial flags, privilege, the complete numeric flag word, and stall cycles
+  (empty without a stall event). These are the received records: elapsed cycles
+  include stall cycles.
 - `intervaltrace-0-pmu.csv`: baseline, nominal, and final snapshots, with logical
   retirement/cycle/physical retirement endpoints and named event columns. Counters
   are **cumulative 64-bit values**, exactly as received. Compute modular deltas
@@ -377,7 +410,8 @@ snapshots. Validation/I/O failures fail the run, including failures during finis
 A successful enabled capture prints one finish summary: completed epochs and
 nominal intervals, BB records (including the number with either partial flag),
 reset closures, retired instructions, target cycles, and `stream_bytes` received
-(the transport byte count, including padding, not CSV file size).
+(the transport byte count, including padding, not CSV file size). With a stall
+event it also prints `stall_cycles`; its `cycles` remain elapsed target cycles.
 Partial BBs carrying both partial flags count once. Counts span all capture epochs.
 Reset counts represent reset-closed epochs, not cycles spent in reset.
 
@@ -464,7 +498,16 @@ From the Chipyard root, with the checkout's conda toolchain installed:
 .conda-env/bin/python3 tools/interval-trace/run-interval-metasim.py --core large --skip-build
 # Build and run Mega instead:
 .conda-env/bin/python3 tools/interval-trace/run-interval-metasim.py --core mega
+# Stall accounting: three timer sleeps in WFI between the markers
+.conda-env/bin/python3 tools/interval-trace/run-interval-metasim.py --core mega --workload wfi --trigger --csv
 ```
+
+The `wfi` workload (`interval-trace-wfi`) runs in M-mode with interrupts globally
+disabled, so WFI wakes on the pending timer interrupt without a trap. It prints its
+own `mcycle`, `minstret` and `mtime` differences over the marked region. The runner
+checks that the capture's interval cycles match `mcycle`, that the stall cycles
+cover the requested waits, and that every interval with stall cycles contains a
+block holding a WFI.
 
 The local runner builds and installs the image through FireMarshal, invokes the
 Chipyard generator, Golden Gate and Verilator, runs the workload, and requires a

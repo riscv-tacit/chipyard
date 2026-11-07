@@ -137,7 +137,8 @@ class WithIntervalTraceBridge extends HarnessBinder({
     require(port.pmuPorts.size == port.io.traces.size,
       s"Interval trace chip $chipId requires a PMU event port for every traced tile")
     port.io.traces.zip(port.pmuPorts).foreach { case (tile_trace, pmuPort) =>
-      IntervalTraceBridge(tile_trace, pmuPort.manifest, pmuPort.io.increments.toSeq, pmuPort.retirementLatency)
+      IntervalTraceBridge(tile_trace, pmuPort.manifest, pmuPort.io.increments.toSeq,
+        pmuPort.retirementLatency, pmuPort.stallEvent)
     }
   }
 })
@@ -147,8 +148,9 @@ class WithIntervalTraceBridge extends HarnessBinder({
   */
 class WithBoomIntervalTrace extends Config(
   new WithIntervalTraceBridge ++
-  // BOOM reports retirement one cycle after its PMU events.
-  new chipyard.iobinders.WithPMUTraceIO(retirementLatency = 1) ++
+  // BOOM reports retirement one cycle after its PMU events. While csr_stall
+  // holds (WFI), commit stops and mcycle does not advance.
+  new chipyard.iobinders.WithPMUTraceIO(retirementLatency = 1, stallEvent = Some("csr.stall_cycles")) ++
   new boom.v3.common.WithPMUEvents ++
   new chipyard.config.WithTraceIO
 )

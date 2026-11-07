@@ -49,12 +49,31 @@ class IntervalTraceInterfaceSpec extends AnyFlatSpec {
     intercept[IllegalArgumentException] { key.copy(traceWidths = traceWidths.copy(wdataWidth = Some(0))) }
   }
 
+  it should "accept only a cataloged cycle event as the stall event, by name" in {
+    val stalled = key.copy(stallEvent = Some("tile.cycles"))
+    assert(stalled.stallIndex.contains(1) && key.stallIndex.isEmpty)
+    intercept[IllegalArgumentException] { key.copy(stallEvent = Some("csr.stall_cycles")) }
+    intercept[IllegalArgumentException] { key.copy(stallEvent = Some("rob.instructions_retired")) }
+    assert(IntervalTraceFormat.manifestJson(stalled).contains("\"stall_event\":\"tile.cycles\""))
+    assert(IntervalTraceFormat.manifestJson(key).contains("\"stall_event\":null"))
+    assert(IntervalTraceFormat.catalogId(stalled) != IntervalTraceFormat.catalogId(key))
+    assert(IntervalTraceFormat.bbWords(stalled) == 5 && IntervalTraceFormat.bbWords(key) == 4)
+    // The stall event changes the BB record layout, so the stub must not share a defname.
+    val bridges = elaborate(Seq(key, stalled)).collect { case a: BridgeAnnotation => a }
+    assert(bridges.map(_.target.module).distinct.size == 2)
+    assert(bridges.map(_.widgetConstructorKey).toSet == Set(Some(key), Some(stalled)))
+    val decoded = firrtl.annotations.JsonProtocol.deserialize(firrtl.annotations.JsonProtocol.serialize(bridges))
+    assert(decoded == bridges)
+  }
+
   it should "convert a tile's event list into a bridge key" in {
     val manifest = PMUManifest("boom_tile_0", Vector(PMUEvent(0, "retired", "instructions", "Retired")))
     val converted = IntervalTraceBridge.key(manifest, traceWidths, retirementLatency = 1)
     assert(converted.source == "boom_tile_0" && converted.retirementLatency == 1)
     assert(converted.events == Seq(IntervalPMUEvent(0, "retired", "instructions", "Retired")))
     assert(IntervalTraceFormat.manifestJson(converted).contains("\"name\":\"retired\""))
+    val stallManifest = PMUManifest("boom_tile_0", Vector(PMUEvent(0, "csr.stall_cycles", "cycles", "Stall")))
+    assert(IntervalTraceBridge.key(stallManifest, traceWidths, 1, Some("csr.stall_cycles")).stallIndex.contains(0))
   }
 
   "Interval trace stub" should "preserve narrow inputs and annotate every field in one clock domain" in {

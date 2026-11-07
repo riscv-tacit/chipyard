@@ -18,17 +18,24 @@ struct intervaltrace_stats {
   uint64_t resets = 0;
   uint64_t instructions = 0;
   uint64_t cycles = 0;
+  uint64_t stall_cycles = 0;
 };
 
 /** Incremental framing and interval/snapshot checks, independent of DMA pulls.
  * This validates the raw stream; feature construction belongs to host workers.
+ * stall_counter is the event ID of the catalog's stall event, or -1 without one.
+ * With one, every BB carries a fifth word, its stall cycles, and those must sum
+ * to the stall counter at every interval snapshot.
  */
 class intervaltrace_decoder {
 public:
   using record_callback = std::function<void(unsigned, unsigned, uint64_t, const std::vector<uint64_t> &)>;
-  intervaltrace_decoder(unsigned counters, uint64_t catalog_id, record_callback callback = {})
-      : counters(counters), catalog_id(catalog_id), callback(std::move(callback)) {
+  intervaltrace_decoder(unsigned counters, uint64_t catalog_id, int64_t stall_counter = -1,
+                        record_callback callback = {})
+      : counters(counters), catalog_id(catalog_id), stall_counter(stall_counter),
+        bb_words(stall_counter >= 0 ? 5 : 4), callback(std::move(callback)) {
     check(counters != 0, "empty PMU catalog");
+    check(stall_counter >= -1 && stall_counter < int64_t(counters), "stall event outside the PMU catalog");
   }
 
   void push(const uint8_t *data, size_t size) {
@@ -40,7 +47,7 @@ public:
       check(((header >> 8) & 255) == 1, "unsupported format version");
       check(kind >= 1 && kind <= 4, "unknown record type");
       const uint64_t payload = header >> 32;
-      check(payload == (kind == 2 ? 4ull + counters : 4ull), "invalid payload length");
+      check(payload == payload_words(kind), "invalid payload length");
       const size_t bytes = ((payload + 1 + 7) / 8) * 64;
       if (buffered.size() - offset < bytes)
         break;
@@ -59,7 +66,7 @@ public:
   // for one stream; both execute the same semantic checks and callback.
   void push_record(unsigned kind, unsigned flags, const std::vector<uint64_t> &words) {
     check(kind >= 1 && kind <= 4 && flags <= 65535, "invalid record type or flags");
-    check(words.size() == (kind == 2 ? 4ull + counters : 4ull), "invalid payload length");
+    check(words.size() == payload_words(kind), "invalid payload length");
     consume(kind, flags, words);
     if (callback) callback(kind, flags, epoch, words);
   }
@@ -77,6 +84,9 @@ private:
     if (!condition)
       throw std::runtime_error(message);
   }
+  uint64_t payload_words(unsigned kind) const {
+    return kind == 2 ? 4ull + counters : kind == 1 ? bb_words : 4ull;
+  }
   static uint64_t word(const uint8_t *data) {
     uint64_t result = 0;
     for (unsigned i = 0; i < 8; ++i)
@@ -92,7 +102,8 @@ private:
       epoch = w[0];
       in_epoch = true;
       have_baseline = have_final = false;
-      retired = bb_cycles = snapshot_id = snapshot_cycle = snapshot_retired = physical_retired = 0;
+      retired = bb_cycles = bb_stall = snapshot_stall = 0;
+      snapshot_id = snapshot_cycle = snapshot_retired = physical_retired = 0;
       pending_boundaries.clear();
       return;
     }
@@ -114,13 +125,14 @@ private:
           final_flags = flags & 32;
         } else {
           check(flags == 0 && w[1] > snapshot_retired, "invalid interval snapshot");
-          pending_boundaries.push_back({w[1], w[2]});
+          pending_boundaries.push_back({w[1], w[2], stall_counter >= 0 ? w[4 + stall_counter] : 0});
         }
       }
       snapshot_id = w[0];
       snapshot_retired = w[1];
       snapshot_cycle = w[2];
       physical_retired = w[3];
+      if (stall_counter >= 0) snapshot_stall = w[4 + stall_counter];
     } else if (kind == 1) {
       check(have_baseline, "BB without capture baseline");
       check((flags & ~(1u | 2u | 4u | 32u | 64u | 128u | 256u | (7u << 13))) == 0, "invalid BB flags");
@@ -128,11 +140,17 @@ private:
       retired += w[2];
       check(bb_cycles + w[3] >= bb_cycles, "BB cycle count overflow");
       bb_cycles += w[3];
+      if (stall_counter >= 0) {
+        check(w[4] <= w[3], "BB stall cycles exceed elapsed cycles");
+        bb_stall += w[4];
+      }
       if (flags & 1) {
         check(!pending_boundaries.empty() && pending_boundaries.front().retired == retired,
               "interval boundary has no matching PMU snapshot");
         check(pending_boundaries.front().cycle == bb_cycles,
               "interval BB and PMU timestamps disagree");
+        check(pending_boundaries.front().stall == bb_stall,
+              "interval BB stall cycles and PMU stall counter disagree");
         pending_boundaries.pop_front();
         ++totals.intervals;
       }
@@ -149,9 +167,12 @@ private:
             "epoch retirement totals disagree");
       check(w[2] == snapshot_cycle && bb_cycles <= w[2] && w[3] == snapshot_id,
             "epoch timing or snapshot totals disagree");
+      check(bb_stall <= snapshot_stall && snapshot_stall - bb_stall <= w[2] - bb_cycles,
+            "epoch stall totals disagree");
       ++totals.epochs;
       totals.instructions += retired;
       totals.cycles += w[2];
+      totals.stall_cycles += snapshot_stall;
       if (flags & 32u)
         ++totals.resets;
       in_epoch = false;
@@ -161,13 +182,15 @@ private:
   intervaltrace_stats totals;
   const unsigned counters;
   const uint64_t catalog_id;
+  const int64_t stall_counter;
+  const uint64_t bb_words;
   const record_callback callback;
   std::vector<uint8_t> buffered;
-  struct boundary { uint64_t retired, cycle; };
+  struct boundary { uint64_t retired, cycle, stall; };
   std::deque<boundary> pending_boundaries;
   bool in_epoch = false, have_baseline = false, have_final = false;
   unsigned final_flags = 0;
-  uint64_t epoch = 0, retired = 0, bb_cycles = 0;
+  uint64_t epoch = 0, retired = 0, bb_cycles = 0, bb_stall = 0, snapshot_stall = 0;
   uint64_t snapshot_id = 0, snapshot_cycle = 0, snapshot_retired = 0, physical_retired = 0;
 };
 #endif

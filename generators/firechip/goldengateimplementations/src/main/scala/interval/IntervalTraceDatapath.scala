@@ -86,6 +86,8 @@ class IntervalBBState extends Bundle {
   val next_pc = UInt(64.W)
   val instructions = UInt(64.W)
   val last_boundary_cycle = UInt(64.W)
+  // Cumulative stall-event count at the last boundary; unused without a stall event.
+  val last_boundary_stall = UInt(64.W)
   val retired = UInt(64.W)
   // count + carried drift: subtract nominal length once per completed block.
   val progress = UInt(64.W)
@@ -125,10 +127,18 @@ class IntervalTraceDatapath(key: IntervalTraceBridgeKey, incrementBits: Option[I
     Cat(payloadWords.U(32.W), flags.pad(16)(15, 0), version.U(8.W), kind.U(8.W))
   def record(kind: Int, flags: UInt, payload: Seq[UInt], width: Int = beatBits): UInt =
     Cat((Seq(header(kind, flags, payload.size)) ++ payload.map(_.pad(64)(63, 0))).reverse).pad(width)
-  def bbRecord(s: IntervalBBState, end_pc: UInt, count: UInt, cycle_end: UInt, flags: UInt): UInt =
+  // stall_end is the cumulative stall-event count at this boundary. A block's
+  // stall cycles follow the same boundary convention as its elapsed cycles.
+  def bbRecord(s: IntervalBBState, end_pc: UInt, count: UInt, cycle_end: UInt, stall_end: Option[UInt],
+               flags: UInt): UInt =
     record(bb, flags | (s.privilege.pad(16) << privilegeShift) |
       Mux(s.partial_start, partialStart.U(16.W), 0.U(16.W)),
-      Seq(s.start_pc, end_pc, count, cycle_end - s.last_boundary_cycle))
+      Seq(s.start_pc, end_pc, count, cycle_end - s.last_boundary_cycle) ++
+        stall_end.map(_ - s.last_boundary_stall))
+  def markBoundary(s: IntervalBBState, cycle: UInt, stall: Option[UInt]): Unit = {
+    s.last_boundary_cycle := cycle
+    stall.foreach(s.last_boundary_stall := _)
+  }
   def endsBlock(insn: UInt): Bool = {
     val compressed = insn(1, 0) =/= 3.U
     val c_jump_branch = insn(1, 0) === 1.U &&
@@ -248,6 +258,7 @@ class IntervalTraceDatapath(key: IntervalTraceBridgeKey, incrementBits: Option[I
 
   val next_cycle = cycles + 1.U
   val next_counters = VecInit(counters.zip(io.target.bits.increments).map { case (value, increment) => value + increment })
+  val next_stall = key.stallIndex.map(next_counters(_))
   val prefix = Wire(Vec(lanes + 1, new IntervalBBState))
   prefix(0) := state
   val new_bb_valid = WireInit(VecInit(Seq.fill(bbSlots)(false.B)))
@@ -269,10 +280,10 @@ class IntervalTraceDatapath(key: IntervalTraceBridgeKey, incrementBits: Option[I
     val split = slot.valid && prior.instructions =/= 0.U && (privilege_changed || pc_changed)
     when(split) {
       new_bb_valid(2 * i) := true.B
-      new_bb_records(2 * i) := bbRecord(prior, prior.last_pc, prior.instructions, next_cycle,
+      new_bb_records(2 * i) := bbRecord(prior, prior.last_pc, prior.instructions, next_cycle, next_stall,
         partialEnd.U | Mux(privilege_changed, privilegeChange.U, discontinuity.U))
       current.instructions := 0.U
-      current.last_boundary_cycle := next_cycle
+      markBoundary(current, next_cycle, next_stall)
       current.partial_start := true.B
     }
     val retired_state = WireDefault(current)
@@ -291,10 +302,10 @@ class IntervalTraceDatapath(key: IntervalTraceBridgeKey, incrementBits: Option[I
     when(slot.valid && endsBlock(slot.insn)) {
       val closes_interval = retired_state.progress >= nominal_interval
       new_bb_valid(2 * i + 1) := true.B
-      new_bb_records(2 * i + 1) := bbRecord(retired_state, pc, retired_state.instructions, next_cycle,
+      new_bb_records(2 * i + 1) := bbRecord(retired_state, pc, retired_state.instructions, next_cycle, next_stall,
         Mux(closes_interval, terminateInterval.U, 0.U))
       prefix(i + 1).instructions := 0.U
-      prefix(i + 1).last_boundary_cycle := next_cycle
+      markBoundary(prefix(i + 1), next_cycle, next_stall)
       prefix(i + 1).partial_start := false.B
       when(closes_interval) {
         prefix(i + 1).progress := retired_state.progress - nominal_interval
@@ -314,8 +325,8 @@ class IntervalTraceDatapath(key: IntervalTraceBridgeKey, incrementBits: Option[I
     when(prefix(lanes).instructions =/= 0.U) {
       new_bb_valid(bbSlots - 1) := true.B
       new_bb_records(bbSlots - 1) := bbRecord(prefix(lanes), prefix(lanes).last_pc,
-        prefix(lanes).instructions, next_cycle, (partialEnd | trap).U)
-      final_state.last_boundary_cycle := next_cycle
+        prefix(lanes).instructions, next_cycle, next_stall, (partialEnd | trap).U)
+      markBoundary(final_state, next_cycle, next_stall)
     }
     final_state.instructions := 0.U
     final_state.partial_start := true.B
@@ -356,7 +367,8 @@ class IntervalTraceDatapath(key: IntervalTraceBridgeKey, incrementBits: Option[I
     state.snapshot_id := state.snapshot_id + 1.U
     when(state.instructions =/= 0.U) {
       bb_mask := 1.U
-      bb_records(0) := bbRecord(state, state.last_pc, state.instructions, cycles, partialEnd.U | reason)
+      bb_records(0) := bbRecord(state, state.last_pc, state.instructions, cycles,
+        key.stallIndex.map(counters(_)), partialEnd.U | reason)
     }
   }
 }

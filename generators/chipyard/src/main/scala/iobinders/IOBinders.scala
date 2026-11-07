@@ -480,11 +480,14 @@ class WithTraceGenSuccessPunchthrough extends OverrideIOBinder({
   }
 })
 
-/** retirementLatency: cycles by which the tile's trace retirement lags its PMU events. */
-case class PMUTraceParams(retirementLatency: Int)
+/** retirementLatency: cycles by which the tile's trace retirement lags its PMU events.
+  * stallEvent: name of a one-bit cycle event during which the core is stalled
+  * without advancing its own cycle counter (WFI); trace consumers may report it per block.
+  */
+case class PMUTraceParams(retirementLatency: Int, stallEvent: Option[String] = None)
 case object ExportPMUTrace extends Field[Option[PMUTraceParams]](None)
-class WithPMUTraceIO(retirementLatency: Int) extends Config((site, here, up) => {
-  case ExportPMUTrace => Some(PMUTraceParams(retirementLatency))
+class WithPMUTraceIO(retirementLatency: Int, stallEvent: Option[String] = None) extends Config((site, here, up) => {
+  case ExportPMUTrace => Some(PMUTraceParams(retirementLatency, stallEvent))
 })
 
 class WithTraceIOPunchthrough extends OverrideLazyIOBinder({
@@ -535,7 +538,7 @@ class WithTraceIOPunchthrough extends OverrideLazyIOBinder({
           val pmu_events = IO(Output(new PMUTraceIO(local.increments.map(chiselTypeOf(_)))))
             .suggestName(s"pmu_events_$tileId")
           pmu_events.increments.zip(local.increments).foreach { case (sink, source) => sink := source }
-          PMUTracePort(() => pmu_events, local.manifest, pmuTrace.retirementLatency)
+          PMUTracePort(() => pmu_events, local.manifest, pmuTrace.retirementLatency, pmuTrace.stallEvent)
         }
       }.getOrElse(Nil)
       TracePort(() => trace, cfg, pmuPorts)

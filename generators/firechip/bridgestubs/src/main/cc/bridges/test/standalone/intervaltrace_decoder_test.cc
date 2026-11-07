@@ -23,11 +23,12 @@ static void rejects(const std::function<void()> &fn) {
   assert(threw);
 }
 int main(int argc, char **argv) {
-  if (argc == 4) {
+  // Arguments: stream, counter count, catalog ID and, optionally, the stall event ID.
+  if (argc == 4 || argc == 5) {
     std::ifstream file(argv[1], std::ios::binary);
     assert(file.good());
     const std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(file)), {});
-    intervaltrace_decoder decoder(std::stoul(argv[2]), std::stoull(argv[3]));
+    intervaltrace_decoder decoder(std::stoul(argv[2]), std::stoull(argv[3]), argc == 5 ? std::stoll(argv[4]) : -1);
     for (size_t i = 0; i < bytes.size(); i += 13)
       decoder.push(bytes.data() + i, std::min<size_t>(13, bytes.size() - i));
     decoder.finish();

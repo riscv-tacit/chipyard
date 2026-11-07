@@ -38,11 +38,17 @@ struct intervaltrace_features {
  * dependency. The callback is synchronous: copy the result if retaining it.
  * Pending PMUs are bounded by the producer's retirement batch, and BB storage
  * by the distinct block identities in the current interval.
+ *
+ * With a stall event (stall_counter >= 0), every cycle quantity excludes stall
+ * cycles: a block's cycles are its elapsed cycles minus its stall cycles, and
+ * cycle endpoints are snapshot cycles minus the cumulative stall counter. Wall
+ * time remains available per interval in counter_deltas.
  */
 class intervaltrace_aggregator {
 public:
   using callback_type = std::function<void(const intervaltrace_features &)>;
-  explicit intervaltrace_aggregator(callback_type callback) : callback(std::move(callback)) {}
+  explicit intervaltrace_aggregator(callback_type callback, int64_t stall_counter = -1)
+      : callback(std::move(callback)), stall_counter(stall_counter) {}
 
   void consume(unsigned kind, unsigned flags, uint64_t epoch, const std::vector<uint64_t> &w) {
     if (kind == 3) {
@@ -56,11 +62,12 @@ public:
       else pending.push_back({flags, w});
     } else if (kind == 1) {
       auto &block = current.blocks[{w[0], w[1], flags >> 13, flags & 6u}];
+      const uint64_t cycles = stall_counter >= 0 ? w[3] - w[4] : w[3]; // decoder checked w[4] <= w[3]
       block.instructions += w[2];
-      block.cycles += w[3];
+      block.cycles += cycles;
       ++block.executions;
       current.instructions += w[2];
-      current.attributed_cycles += w[3];
+      current.attributed_cycles += cycles;
       current.partial_blocks += bool(flags & 6);
       current.bb_flags |= flags;
       if (flags & 1) emit(false);
@@ -73,6 +80,10 @@ public:
 
 private:
   struct snapshot { unsigned flags; std::vector<uint64_t> words; };
+  // Snapshot cycle position excluding stall cycles since the epoch baseline.
+  uint64_t busy_cycle(const std::vector<uint64_t> &w) const {
+    return stall_counter >= 0 ? w[2] - w[4 + stall_counter] : w[2];
+  }
   void emit(bool final) {
     if (previous.empty() || pending.empty()) throw std::runtime_error("missing aggregate snapshot");
     const auto &next = pending.front();
@@ -83,9 +94,9 @@ private:
     current.final = final;
     current.flags = next.flags;
     current.start_retired = previous[1]; current.end_retired = w[1];
-    current.start_cycle = previous[2]; current.end_cycle = w[2];
+    current.start_cycle = busy_cycle(previous); current.end_cycle = busy_cycle(w);
     current.start_physical_retired = previous[3]; current.end_physical_retired = w[3];
-    current.cycles = w[2] - previous[2];
+    current.cycles = current.end_cycle - current.start_cycle;
     current.physical_retirements = w[3] - previous[3];
     if (current.attributed_cycles > current.cycles || (!final && current.attributed_cycles != current.cycles))
       throw std::runtime_error("aggregate cycle boundary mismatch");
@@ -101,6 +112,7 @@ private:
     current.nominal_interval = nominal;
   }
   callback_type callback;
+  const int64_t stall_counter;
   intervaltrace_features current;
   std::vector<uint64_t> previous;
   std::deque<snapshot> pending;

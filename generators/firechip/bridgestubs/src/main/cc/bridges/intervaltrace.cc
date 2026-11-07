@@ -25,13 +25,13 @@ intervaltrace_t::intervaltrace_t(simif_t &sim, StreamEngine &stream,
     const INTERVALTRACEBRIDGEMODULE_struct &addrs, int index,
     const std::vector<std::string> &args, int stream_idx, int stream_depth,
     unsigned counters, uint64_t catalog_id, const char *manifest_json,
-    const std::vector<std::string> &event_names)
+    const std::vector<std::string> &event_names, int64_t stall_counter)
     : streaming_bridge_driver_t(sim, stream, &KIND), addrs(addrs),
-      stream_idx(stream_idx), stream_depth(stream_depth),
+      stream_idx(stream_idx), stream_depth(stream_depth), stall_counter(stall_counter),
       aggregate([this](const intervaltrace_features &features) {
         write_features(features);
-      }),
-      decoder(counters, catalog_id, [this](unsigned kind, unsigned flags, uint64_t epoch,
+      }, stall_counter),
+      decoder(counters, catalog_id, stall_counter, [this](unsigned kind, unsigned flags, uint64_t epoch,
                                          const std::vector<uint64_t> &words) {
         aggregate.consume(kind, flags, epoch, words);
         if (dump_csv) write_record(kind, flags, epoch, words);
@@ -132,7 +132,7 @@ void intervaltrace_t::init() {
       bb_output = open_output("-bb.csv");
       pmu_output = open_output("-pmu.csv");
       epoch_output = open_output("-epochs.csv");
-      std::fprintf(bb_output, "record,epoch,start_pc,end_pc,instructions,elapsed_cycles,terminate_interval,partial_start,partial_end,privilege,flags\n");
+      std::fprintf(bb_output, "record,epoch,start_pc,end_pc,instructions,elapsed_cycles,terminate_interval,partial_start,partial_end,privilege,flags,stall_cycles\n");
       std::fprintf(pmu_output, "record,epoch,snapshot_id,kind,logical_retired,cycle,physical_retired,flags");
       for (const auto &name : event_names) {
         // Always quote names, including any embedded comma, quote or newline.
@@ -208,8 +208,11 @@ void intervaltrace_t::write_record(unsigned kind, unsigned flags, uint64_t epoch
   FILE *file = kind == 1 ? bb_output : kind == 2 ? pmu_output : epoch_output;
   std::fprintf(file, "%" PRIu64 ",%" PRIu64 ",", record_id, epoch);
   if (kind == 1) {
-    std::fprintf(file, "0x%" PRIx64 ",0x%" PRIx64 ",%" PRIu64 ",%" PRIu64 ",%u,%u,%u,%u,%u\n",
+    // Decoded records keep elapsed and stall cycles separate; stall is empty without a stall event.
+    std::fprintf(file, "0x%" PRIx64 ",0x%" PRIx64 ",%" PRIu64 ",%" PRIu64 ",%u,%u,%u,%u,%u,",
                  w[0], w[1], w[2], w[3], !!(flags & 1), !!(flags & 2), !!(flags & 4), flags >> 13, flags);
+    if (w.size() > 4) std::fprintf(file, "%" PRIu64, w[4]);
+    std::fputc('\n', file);
   } else if (kind == 2) {
     std::fprintf(file, "%" PRIu64 ",%s,%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%u",
                  w[0], flags & 8 ? "baseline" : flags & 16 ? "final" : "nominal", w[1], w[2], w[3], flags);
@@ -273,9 +276,12 @@ void intervaltrace_t::finish() {
     std::fprintf(stderr,
                  "IntervalTrace %s: epochs=%" PRIu64 ", intervals=%" PRIu64
                  ", BBs=%" PRIu64 " (partial=%" PRIu64 "), resets=%" PRIu64
-                 ", instructions=%" PRIu64 ", cycles=%" PRIu64 ", stream_bytes=%" PRIu64 "\n",
+                 ", instructions=%" PRIu64 ", cycles=%" PRIu64 ", stream_bytes=%" PRIu64,
                  prefix.c_str(), stats.epochs, stats.intervals, stats.basic_blocks,
                  stats.partial_basic_blocks, stats.resets, stats.instructions, stats.cycles, bytes_received);
+    // cycles above are elapsed target cycles; interval outputs exclude these stall cycles.
+    if (stall_counter >= 0) std::fprintf(stderr, ", stall_cycles=%" PRIu64, stats.stall_cycles);
+    std::fputc('\n', stderr);
   }
   // FireSim captures simulation_run's exit code before calling finish(). A late
   // validation failure must escape here rather than leaving a successful result.

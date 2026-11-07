@@ -53,7 +53,8 @@ class IntervalTraceBridgeModule(key: IntervalTraceBridgeKey)(implicit p: Paramet
       genConstructor(base, sb, "intervaltrace_t", "intervaltrace", Seq(
         UInt32(toHostStreamIdx), UInt32(toHostCPUQueueDepth), UInt32(key.events.size),
         UInt64(IntervalTraceFormat.catalogId(key)), CStrLit(IntervalTraceFormat.manifestJson(key)),
-        StdVector("std::string", key.events.map(e => CStrLit(e.name)))), hasStreams = true)
+        StdVector("std::string", key.events.map(e => CStrLit(e.name))),
+        Int64(BigInt(key.stallIndex.getOrElse(-1)))), hasStreams = true)
     }
   }
 }

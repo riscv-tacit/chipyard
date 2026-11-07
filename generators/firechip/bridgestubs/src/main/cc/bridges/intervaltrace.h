@@ -31,7 +31,8 @@ public:
                   const INTERVALTRACEBRIDGEMODULE_struct &addrs, int index,
                   const std::vector<std::string> &args, int stream_idx,
                   int stream_depth, unsigned counters, uint64_t catalog_id,
-                  const char *manifest_json, const std::vector<std::string> &event_names);
+                  const char *manifest_json, const std::vector<std::string> &event_names,
+                  int64_t stall_counter);
   ~intervaltrace_t() override;
   void init() override;
   void tick() override;
@@ -47,6 +48,7 @@ private:
   const INTERVALTRACEBRIDGEMODULE_struct addrs;
   const int stream_idx;
   const int stream_depth;
+  const int64_t stall_counter;
   intervaltrace_aggregator aggregate;
   intervaltrace_decoder decoder;
   uint64_t nominal_interval = 1000000;

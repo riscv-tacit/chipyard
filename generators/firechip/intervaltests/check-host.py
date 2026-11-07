@@ -27,9 +27,15 @@ def run(args):
 exe = OUT / "intervaltrace_decoder_test"
 run(cxx + flags + ["-I", str(bridges), str(bridges / "test/standalone/intervaltrace_decoder_test.cc"), "-o", str(exe)])
 run([str(exe)])
-for count in (1, 2, 18, 19):
-    base = ROOT / f"generators/firechip/intervaltests/target/rtl-{count}"
-    run([str(exe), str(base.with_suffix(".bin")), str(count), base.with_suffix(".catalog").read_text()])
+TARGET = ROOT / "generators/firechip/intervaltests/target"
+# RTL-produced streams: (fixture, counters, stall event ID or None).
+RTL = [(f"rtl-{count}", count, None) for count in (1, 2, 18, 19)] + [("rtl-stall", 18, 5), ("rtl-stall-cases", 3, 1)]
+for name, count, stall in RTL:
+    base = TARGET / name
+    assert (base.with_suffix(".stall").read_text().strip() if stall is not None else None) == \
+        (str(stall) if stall is not None else None)
+    run([str(exe), str(base.with_suffix(".bin")), str(count), base.with_suffix(".catalog").read_text()] +
+        ([str(stall)] if stall is not None else []))
 includes = ["-I", str(midas), "-I", str(bridges.parent), "-I", str(legacy)]
 run(cxx + flags + includes + ["-c", str(bridges / "intervaltrace.cc"), "-o", str(OUT / "intervaltrace.o")])
 header_check = OUT / "generated-header-check.cc"
@@ -76,7 +82,8 @@ def check_csv(output, binary, counters):
         if kind == 1:
             expected.update(start_pc=hex(w[0]), end_pc=hex(w[1]), instructions=w[2], elapsed_cycles=w[3],
                             terminate_interval=int(bool(flags & 1)), partial_start=int(bool(flags & 2)),
-                            partial_end=int(bool(flags & 4)), privilege=flags >> 13)
+                            partial_end=int(bool(flags & 4)), privilege=flags >> 13,
+                            stall_cycles=w[4] if len(w) > 4 else '')
         elif kind == 2:
             expected.update(snapshot_id=w[0], kind='baseline' if flags & 8 else 'final' if flags & 16 else 'nominal',
                             logical_retired=w[1], cycle=w[2], physical_retired=w[3])
@@ -148,9 +155,23 @@ def write_stream(name, stream):
     return base
 
 
-def check_intervals(output, binary):
-    """Check the driver's interval JSONL version 2 output in every mode, and its
-    aggregates against the raw packets. Returns (definitions, intervals)."""
+def stall_words(binary, stall):
+    """Per-epoch BB stall sums and final stall counters, straight from the packets."""
+    bb_stall, final_stall, epoch = {}, {}, 0
+    for kind, flags, w in decode(binary):
+        if kind == 3:
+            epoch = w[0]
+        elif kind == 1 and stall is not None:
+            bb_stall[epoch] = bb_stall.get(epoch, 0) + w[4]
+        elif kind == 2 and flags & 16 and stall is not None:
+            final_stall[epoch] = w[4 + stall]
+    return bb_stall, final_stall
+
+
+def check_intervals(output, binary, stall=None):
+    """Check the driver's interval JSONL version 3 output in every mode, and its
+    aggregates against the raw packets. With a stall event, every cycle field
+    excludes stall cycles. Returns (definitions, intervals)."""
     reference = None
     for name in ('default', 'raw-only', 'normal', 'raw'):
         catalog_text = (Path(output) / f'{name}-7-blocks.csv').read_text()
@@ -165,11 +186,24 @@ def check_intervals(output, binary):
     assert list(definitions) == list(range(1, len(definitions) + 1))
     intervals = [json.loads(line) for line in reference[1]]
     for f in intervals:
-        assert f['interval_format_version'] == 2
+        assert f['interval_format_version'] == 3
         assert all(len(block) == 4 and block[0] in definitions for block in f['blocks'])
         assert sum(block[1] for block in f['blocks']) == f['instructions']
         assert sum(block[2] for block in f['blocks']) == f['attributed_cycles']
         assert f['attributed_cycles'] + f['unattributed_cycles'] == f['cycles']
+        assert f['cycles'] == f['end_cycle'] - f['start_cycle']
+    # Wall cycles minus stall cycles, per epoch, from the PMU deltas and the snapshots.
+    for e in {f['epoch'] for f in intervals}:
+        epoch_intervals = [f for f in intervals if f['epoch'] == e]
+        stall_delta = sum(f['counter_deltas'][stall] for f in epoch_intervals) if stall is not None else 0
+        wall = None
+        for kind, flags, w in decode(binary):
+            if kind == 4 and w[0] == e:
+                wall = w[2]
+        assert sum(f['cycles'] for f in epoch_intervals) == wall - stall_delta
+    bb_stall, final_stall = stall_words(binary, stall)
+    for e, total in bb_stall.items():
+        assert total <= final_stall[e]
     # Independent of the aggregator: per-epoch BB instructions, nominal snapshots
     # and distinct block identities, straight from the packets.
     bb_instructions, nominal, identities, epoch = {}, {}, set(), 0
@@ -188,13 +222,33 @@ def check_intervals(output, binary):
     return definitions, intervals
 
 
+def stall_records():
+    """Two stalled blocks in one interval and a stalled tail. Two counters, the
+    second the stall event (ID 1); catalog ID 99. BB words: start, end,
+    instructions, elapsed cycles, stall cycles."""
+    return [
+        (3, 0, [1, 4, 2, 99]),
+        (2, 8, [0, 0, 0, 0, 0, 0]),
+        (2, 0, [1, 4, 20, 4, 4, 12]),
+        (1, P | 4 | 64, [0x100, 0x104, 2, 9, 7]),
+        (1, P | 2 | 4 | 64, [0x300, 0x300, 1, 6, 5]),
+        (1, P | 2 | 1, [0x400, 0x400, 1, 5, 0]),
+        (2, 16, [2, 6, 30, 6, 6, 15]),
+        (1, P | 4, [0x500, 0x504, 2, 6, 1]),
+        (4, 0, [1, 6, 30, 2]),
+    ]
+
+
 synthetic = write_stream('aggregate-edge-cases', records())
-for count, base in [(n, ROOT / f"generators/firechip/intervaltests/target/rtl-{n}") for n in (1, 19)] + [(2, synthetic)]:
+stalled = write_stream('aggregate-stall', stall_records())
+cases = [(n, TARGET / f"rtl-{n}", None) for n in (1, 19)] + [(2, synthetic, None)] + \
+    [(count, TARGET / name, stall) for name, count, stall in RTL if stall is not None] + [(2, stalled, 1)]
+for count, base, stall in cases:
     with tempfile.TemporaryDirectory(prefix="driver-", dir=OUT) as output:
         run([str(driver_exe), output, str(base.with_suffix(".bin")), str(count),
-             base.with_suffix(".catalog").read_text().strip()])
+             base.with_suffix(".catalog").read_text().strip()] + ([str(stall)] if stall is not None else []))
         check_csv(output, base.with_suffix(".bin").read_bytes(), count)
-        definitions, intervals = check_intervals(output, base.with_suffix(".bin").read_bytes())
+        definitions, intervals = check_intervals(output, base.with_suffix(".bin").read_bytes(), stall)
         if base == synthetic:
             # Expected aggregation results for the synthetic edge cases.
             assert len(intervals) == 5 and sum(not f['final'] for f in intervals) == 3
@@ -207,7 +261,16 @@ for count, base in [(n, ROOT / f"generators/firechip/intervaltests/target/rtl-{n
             assert intervals[1]['cycles'] == 0 and intervals[2]['partial_blocks'] == 1
             assert definitions[intervals[2]['blocks'][0][0]][3:] == (1, 1)
             assert intervals[4]['blocks'] == [] and intervals[4]['unattributed_cycles'] == 3
-        print(f'PASS: interval JSONL version 2 agrees across output modes and with the raw packets ({count} counters)')
+        if base == stalled:
+            # Busy cycles: elapsed minus stall, per block and per interval endpoint.
+            assert [(f['start_cycle'], f['end_cycle'], f['cycles'], f['attributed_cycles'], f['unattributed_cycles'])
+                    for f in intervals] == [(0, 8, 8, 8, 0), (8, 15, 7, 5, 2)]
+            assert [f['counter_deltas'] for f in intervals] == [[4, 12], [2, 3]]
+            assert [[definitions[b[0]][:2]] + b[1:] for b in intervals[0]['blocks']] == \
+                [[(0x100, 0x104), 2, 2, 1], [(0x300, 0x300), 1, 1, 1], [(0x400, 0x400), 1, 5, 1]]
+            assert intervals[1]['blocks'][0][1:] == [2, 5, 1] and intervals[0]['ipc'] == 0.5
+        print(f'PASS: interval JSONL version 3 agrees across output modes and with the raw packets '
+              f'({count} counters, stall event {stall})')
 
 # The same PC range with a different privilege or partial flag is a different block.
 aliasing = write_stream('aggregate-identities', [
@@ -227,10 +290,23 @@ print('PASS: block identities include privilege and partial flags')
 invalid = [records()[:-1], records()[:2] + records()[3:]]
 bad = records(); bad[4] = (1, P, [0x100, 0x102, 2, 3]); invalid.append(bad)
 bad = records(); bad[0] = (3, 0, [1, 4, 2, 100]); invalid.append(bad)
-for index, stream in enumerate(invalid):
+invalid = [(stream, None) for stream in invalid]
+# With a stall event: a block stalled longer than it lasted, block stall cycles
+# that disagree with the stall counter, a four-word BB, and a stalled tail
+# longer than the tail itself.
+bad = stall_records(); bad[3] = (1, P | 4 | 64, [0x100, 0x104, 2, 9, 10]); bad[4] = (1, P | 2 | 4 | 64, [0x300, 0x300, 1, 6, 2])
+invalid.append((bad, 1))
+bad = stall_records(); bad[5] = (1, P | 2 | 1, [0x400, 0x400, 1, 5, 1]); invalid.append((bad, 1))
+bad = stall_records(); bad[5] = (1, P | 2 | 1, [0x400, 0x400, 1, 5]); invalid.append((bad, 1))
+bad = stall_records(); bad[6] = (2, 16, [2, 6, 30, 6, 6, 20]); invalid.append((bad, 1))
+for index, (stream, stall) in enumerate(invalid):
     base = write_stream(f'aggregate-invalid-{index}', stream)
-    result = subprocess.run([str(exe), str(base.with_suffix('.bin')), '2', '99'], cwd=ROOT, timeout=60,
-                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    result = subprocess.run([str(exe), str(base.with_suffix('.bin')), '2', '99'] + ([str(stall)] if stall is not None else []),
+                            cwd=ROOT, timeout=60, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     assert result.returncode != 0, f'invalid stream {index} was accepted'
+# The valid stall stream must decode only with its stall event declared.
+assert subprocess.run([str(exe), str(stalled.with_suffix('.bin')), '2', '99'], cwd=ROOT, timeout=60,
+                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode != 0
+run([str(exe), str(stalled.with_suffix('.bin')), '2', '99', '1'])
 print(f'PASS: {len(invalid)} invalid streams rejected')
 print("PASS: driver compilation and generated constructor/MMIO layout")

@@ -93,7 +93,8 @@ class PMUTraceIO(incrementTypes: Seq[UInt]) extends Bundle {
 }
 
 /** Sideband event port owned by the corresponding entry of TracePort. */
-case class PMUTracePort(val getIO: () => PMUTraceIO, manifest: pmu.PMUManifest, retirementLatency: Int)
+case class PMUTracePort(val getIO: () => PMUTraceIO, manifest: pmu.PMUManifest, retirementLatency: Int,
+                        stallEvent: Option[String] = None)
     extends Port[PMUTraceIO]
 
 case class TracePort       (val getIO: () => TraceOutputTop, val cosimCfg: SpikeCosimConfig,

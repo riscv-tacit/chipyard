@@ -16,6 +16,9 @@ case class IntervalPMUEvent(id: Int, name: String, unit: String, description: St
 
 /** One tile, one observation clock/reset, one ordered PMU catalog.
   * No Chisel handles or PMU hardware types may be serialized in this key.
+  * stallEvent names a one-bit cycle event during which the core is stalled
+  * without advancing its own cycle counter (WFI). The widget reports each
+  * block's stall cycles beside its elapsed cycles.
   */
 case class IntervalTraceBridgeKey(
   source: String,
@@ -23,6 +26,7 @@ case class IntervalTraceBridgeKey(
   events: Seq[IntervalPMUEvent],
   schemaVersion: Int = 1,
   retirementLatency: Int = 0,
+  stallEvent: Option[String] = None,
 ) extends HasSerializationHints {
   require(retirementLatency == 0 || retirementLatency == 1, "Interval trace supports zero or one cycle of retirement latency")
   require(schemaVersion == 1, "Unsupported interval bridge interface schema")
@@ -37,6 +41,14 @@ case class IntervalTraceBridgeKey(
   require(events.nonEmpty, "Interval bridge requires a PMU catalog")
   require(events.map(_.id) == events.indices, "Interval PMU IDs must be dense and ordered")
   require(events.map(_.name).distinct.size == events.size, "Duplicate interval PMU event names")
+  stallEvent.foreach { name =>
+    val event = events.find(_.name == name)
+    require(event.nonEmpty, s"Interval stall event '$name' is not in the catalog of $source")
+    require(event.get.unit == "cycles", s"Interval stall event '$name' must have unit cycles, not ${event.get.unit}")
+  }
+
+  /** Event-ID position of the stall event's increment and counter. */
+  def stallIndex: Option[Int] = stallEvent.map(name => events.indexWhere(_.name == name))
 
   override def typeHints: Seq[Class[_]] = Seq(classOf[TraceBundleWidths], classOf[IntervalPMUEvent])
 }

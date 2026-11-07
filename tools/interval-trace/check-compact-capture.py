@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Validate an interval capture in JSONL version 2 and its workload results."""
+"""Validate an interval capture in JSONL version 2 or 3 and its workload results.
+
+Version 3 equals version 2, except that with a stall event in the catalog every
+cycle field excludes stall cycles; tile.cycles' delta is then cycles plus the
+stall event's delta.
+"""
 import argparse
 import csv
 import json
@@ -11,7 +16,7 @@ import subprocess
 
 
 def check_capture(prefix, interval):
-    """Validate one capture's catalog, block definitions and intervals (version 2).
+    """Validate one capture's catalog, block definitions and intervals (version 2 or 3).
 
     Returns (names, definitions, epochs, totals). Requires a reset-free capture
     whose intervals all have the given nominal length.
@@ -19,6 +24,8 @@ def check_capture(prefix, interval):
     assert not Path(str(prefix) + '-intervals.jsonl.partial').exists(), 'incomplete capture'
     catalog = json.loads(prefix.with_suffix('.json').read_text())
     names = [event['name'] for event in catalog['events']]
+    stall = catalog.get('stall_event')
+    assert stall is None or stall in names, 'stall event outside the catalog'
     with Path(str(prefix) + '-blocks.csv').open() as stream:
         rows = csv.DictReader(stream)
         assert rows.fieldnames == ['id', 'start_pc', 'end_pc', 'privilege', 'partial_start', 'partial_end']
@@ -32,14 +39,19 @@ def check_capture(prefix, interval):
             assert key[3] in (0, 1) and key[4] in (0, 1)
             definitions[index] = key
     assert len(set(definitions.values())) == len(definitions), 'duplicate block identities'
-    totals = dict(intervals=0, nominal_intervals=0, instructions=0, cycles=0, bb_records=0)
+    totals = dict(intervals=0, nominal_intervals=0, instructions=0, cycles=0, stall_cycles=0, bb_records=0)
+    version = None
     previous = None
     epochs = {}
     referenced = set()
     with Path(str(prefix) + '-intervals.jsonl').open() as stream:
         for line in stream:
             f = json.loads(line)
-            assert f['interval_format_version'] == 2 and f['nominal_interval'] == interval
+            assert f['interval_format_version'] in (2, 3) and f['nominal_interval'] == interval
+            assert version in (None, f['interval_format_version']), 'mixed interval format versions'
+            version = f['interval_format_version']
+            assert stall is None or version == 3, 'a stall event requires interval format version 3'
+            stalled = f['counter_deltas'][names.index(stall)] if stall is not None else 0
             assert len(f['counter_deltas']) == len(names)
             new_epoch = previous is None or previous['final']
             if new_epoch:
@@ -63,8 +75,8 @@ def check_capture(prefix, interval):
                 assert math.isclose(f['ipc'], f['instructions'] / f['cycles'], rel_tol=1e-14)
             else:
                 assert f['ipc'] is None
-            for event, field in [('rob.instructions_retired', 'physical_retirements'), ('tile.cycles', 'cycles')]:
-                assert f['counter_deltas'][names.index(event)] == f[field]
+            assert f['counter_deltas'][names.index('rob.instructions_retired')] == f['physical_retirements']
+            assert f['counter_deltas'][names.index('tile.cycles')] - stalled == f['cycles']
             ids = set()
             instructions = cycles = executions = 0
             for block in f['blocks']:
@@ -77,27 +89,38 @@ def check_capture(prefix, interval):
             assert instructions == f['instructions'] and cycles == f['attributed_cycles']
             totals['intervals'] += 1; totals['nominal_intervals'] += not f['final']
             totals['instructions'] += instructions; totals['cycles'] += f['cycles']; totals['bb_records'] += executions
+            totals['stall_cycles'] += stalled
             for name in ('instructions', 'cycles'):
                 epochs[f['epoch']][name] += f[name]
             epochs[f['epoch']]['intervals'] += 1
             previous = f
     assert previous and previous['final'] and totals['instructions'] > 0
     assert referenced == set(definitions), 'unused catalog definitions'
+    totals['interval_format_version'] = version
     return names, definitions, epochs, totals
 
 
-def check(job, interval, smoke=False):
+def check(job, interval, smoke=False, expected_pass=None):
+    """smoke: the interval-trace-smoke workload; expected_pass: the PASS line prefix
+    of another bare-metal workload. Otherwise a SPEC workload."""
     prefix = job / 'intervaltrace-0'
     names, definitions, epochs, totals = check_capture(prefix, interval)
     uart = (job / 'uartlog').read_text(errors='replace')
     assert '*** PASSED ***' in uart and 'IntervalTrace intervaltrace-0: error:' not in uart
-    summaries = re.findall(r'IntervalTrace intervaltrace-0: epochs=(\d+), intervals=(\d+), BBs=(\d+) .*?resets=(\d+), instructions=(\d+), cycles=(\d+)', uart)
+    summaries = re.findall(r'IntervalTrace intervaltrace-0: epochs=(\d+), intervals=(\d+), BBs=(\d+) .*?resets=(\d+), '
+                           r'instructions=(\d+), cycles=(\d+), stream_bytes=\d+(?:, stall_cycles=(\d+))?', uart)
     assert len(summaries) == 1, 'missing or ambiguous driver summary'
-    assert tuple(map(int, summaries[0])) == (len(epochs), totals['nominal_intervals'], totals['bb_records'], 0, totals['instructions'], totals['cycles'])
+    # The driver summary reports elapsed cycles; interval cycles exclude stall cycles.
+    summary = tuple(int(x or 0) for x in summaries[0])
+    assert summary == (len(epochs), totals['nominal_intervals'], totals['bb_records'], 0, totals['instructions'],
+                       totals['cycles'] + totals['stall_cycles'], totals['stall_cycles'])
     comparisons = 0
     if smoke:
         assert 'PASS interval-trace-smoke checksum=40832' in uart and 'FAIL interval-trace-smoke' not in uart
         benchmark = 'interval-trace-smoke'
+    elif expected_pass:
+        assert expected_pass in uart and 'FAIL ' not in uart
+        benchmark = expected_pass.split()[1]
     else:
         output = job / 'output'
         metadata = json.loads((output / 'benchmark.json').read_text())
@@ -114,7 +137,7 @@ def check(job, interval, smoke=False):
                                stdout=log, stderr=subprocess.STDOUT,
                                env=dict(os.environ, SPEC=metadata['spec_dir']))
             comparisons += 1
-    result = dict(passed=True, benchmark=benchmark, interval_format_version=2, nominal_interval=interval,
+    result = dict(passed=True, benchmark=benchmark, nominal_interval=interval,
                   block_definitions=len(definitions), epochs=epochs, comparisons=comparisons, capture=str(job), **totals)
     (job / 'validation.json').write_text(json.dumps(result, indent=2) + '\n')
     print(json.dumps(result, indent=2))

@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Build a FireMarshal smoke image and run the interval bridge in local Verilator metasim."""
+"""Build a FireMarshal bare-metal image and run the interval bridge in local Verilator metasim.
+
+Workloads: smoke (a checksum loop) and wfi (three timer sleeps in WFI, which
+checks stall accounting against the program's own mcycle and minstret).
+"""
 import argparse
 import csv
 import importlib.util
@@ -15,7 +19,10 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 SIM = ROOT / 'sims/firesim/sim'
 OUT = ROOT / 'tools/interval-trace/target/interval-metasim'
-WORKLOAD = ROOT / 'software/firemarshal/example-workloads/interval-trace-smoke.json'
+WORKLOADS = ROOT / 'software/firemarshal/example-workloads'
+# Workload: (FireMarshal JSON, ELF, PASS line prefix).
+WORKLOAD = {'smoke': ('interval-trace-smoke.json', 'smoke.elf', 'PASS interval-trace-smoke checksum=40832'),
+            'wfi': ('interval-trace-wfi.json', 'wfi.elf', 'PASS interval-trace-wfi ')}
 RECIPES = ROOT / 'sims/firesim-staging/sample_config_build_recipes.yaml'
 
 
@@ -27,14 +34,60 @@ def run(command, log, env, cwd=ROOT, timeout=None):
                        stdout=stream, stderr=subprocess.STDOUT, check=True, timeout=timeout)
 
 
-def check_capture(out, interval):
-    # Interval JSONL version 2: block catalog, interval continuity, totals, PMU
-    # endpoints against retirement and cycles, and the smoke workload result.
+def check_wfi(out, elf, env):
+    """The wfi workload under the marker trigger: one epoch spanning the program's
+    measured region. Interval cycles exclude stall cycles, so they must equal the
+    program's mcycle difference up to the few instructions between its counter
+    reads and the markers; stall cycles must cover its timer waits; and every
+    interval with stall cycles must contain a block holding a WFI."""
+    log = (out / 'uartlog').read_text(errors='replace')
+    fields = dict(re.findall(r'(\w+)=(\d+)', re.search(r'PASS interval-trace-wfi (.*)', log).group(1)))
+    mcycle, minstret, mtime_us, waits_us = (int(fields[k]) for k in ('mcycle', 'minstret', 'mtime_us', 'waits_us'))
+    catalog = json.loads((out / 'intervaltrace-0.json').read_text())
+    names = [e['name'] for e in catalog['events']]
+    stall = names.index(catalog['stall_event'])
+    tile = names.index('tile.cycles')
+    with (out / 'intervaltrace-0-blocks.csv').open() as stream:
+        blocks = {int(r['id']): (int(r['start_pc'], 16), int(r['end_pc'], 16)) for r in csv.DictReader(stream)}
+    disassembly = subprocess.run(['riscv64-unknown-elf-objdump', '-d', elf], env=env, check=True,
+                                 capture_output=True, text=True).stdout
+    wfi_pcs = [int(m, 16) for m in re.findall(r'^\s*([0-9a-f]+):\s+10500073\s+wfi', disassembly, re.M)]
+    intervals = [json.loads(line) for line in (out / 'intervaltrace-0-intervals.jsonl').read_text().splitlines()]
+    if {f['epoch'] for f in intervals} != {1}:
+        raise RuntimeError('expected one marker-triggered epoch')
+    busy = sum(f['cycles'] for f in intervals)
+    stalled = sum(f['counter_deltas'][stall] for f in intervals)
+    wall = sum(f['counter_deltas'][tile] for f in intervals)
+    instructions = sum(f['instructions'] for f in intervals)
+    for f in intervals:
+        if f['counter_deltas'][stall] and not any(
+                blocks[b[0]][0] <= pc <= blocks[b[0]][1] for b in f['blocks'] for pc in wfi_pcs):
+            raise RuntimeError(f'stall cycles in snapshot {f["snapshot_id"]} without a WFI block')
+    summary = dict(mcycle=mcycle, busy_cycles=busy, stall_cycles=stalled, wall_cycles=wall,
+                   minstret=minstret, instructions=instructions, mtime_us=mtime_us, waits_us=waits_us,
+                   stalled_intervals=sum(bool(f['counter_deltas'][stall]) for f in intervals))
+    print(json.dumps(summary, indent=2))
+    (out / 'wfi-check.json').write_text(json.dumps(summary, indent=2) + '\n')
+    # The capture spans the markers; the program reads its counters just inside them,
+    # next to an uncached mtime load. mtime ticks once per microsecond (1,000 cycles),
+    # so each of the three waits can be up to one tick shorter than requested.
+    if not 0 <= busy - mcycle <= 1000 or not 0 <= instructions - minstret <= 50:
+        raise RuntimeError('busy cycles or instructions disagree with mcycle/minstret')
+    if wall != busy + stalled or not (waits_us - 3) * 1000 <= stalled <= (mtime_us + 1) * 1000:
+        raise RuntimeError('stall cycles do not cover the timer waits')
+    print('PASS: interval cycles match mcycle; stall cycles cover the WFI waits and lie in WFI blocks')
+
+
+def check_capture(out, interval, workload, elf, env):
+    # Interval JSONL: block catalog, interval continuity, totals, PMU endpoints
+    # against retirement and cycles, and the workload result.
     spec = importlib.util.spec_from_file_location(
         'check_compact_capture', Path(__file__).with_name('check-compact-capture.py'))
     checker = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(checker)
-    checker.check(out, interval, smoke=True)
+    checker.check(out, interval, smoke=workload == 'smoke', expected_pass=WORKLOAD[workload][2])
+    if workload == 'wfi':
+        check_wfi(out, elf, env)
     if not (out / 'intervaltrace-0-pmu.csv').exists():
         return
     # The driver validates framing/integrity before emitting CSV. These two architectural
@@ -71,6 +124,7 @@ def check_capture(out, interval):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--core', choices=('large', 'mega'), default='large')
+    parser.add_argument('--workload', choices=sorted(WORKLOAD), default='smoke')
     parser.add_argument('--jobs', type=int, default=8)
     parser.add_argument('--interval', type=int, default=1000)
     parser.add_argument('--max-cycles', type=int, default=2000000)
@@ -107,8 +161,9 @@ def main():
     env['LIBRARY_PATH'] = str(conda / 'lib') + os.pathsep + env.get('LIBRARY_PATH', '')
     env['LD_LIBRARY_PATH'] = str(conda / 'lib') + os.pathsep + env.get('LD_LIBRARY_PATH', '')
     marshal = ROOT / 'software/firemarshal/marshal'
-    run([marshal, 'build', WORKLOAD], out / 'marshal-build.log', env)
-    run([marshal, 'install', WORKLOAD], out / 'marshal-install.log', env)
+    workload = WORKLOADS / WORKLOAD[args.workload][0]
+    run([marshal, 'build', workload], out / 'marshal-build.log', env)
+    run([marshal, 'install', workload], out / 'marshal-install.log', env)
     base = 'firechip.chip.FireSim.' + name
     firrtl = generated / (base + '.fir')
     annotations = generated / (base + '.anno.json')
@@ -140,7 +195,7 @@ def main():
     binary = generated / 'VFireSim'
     if not binary.exists():
         parser.error('metasimulator missing; omit --skip-build')
-    elf = WORKLOAD.with_suffix('') / 'smoke.elf'
+    elf = workload.with_suffix('') / WORKLOAD[args.workload][1]
     # Remove this runner's previous outputs so an optional dump cannot look current.
     for suffix in ('.bin', '.json', '-bb.csv', '-pmu.csv', '-epochs.csv', '-intervals.jsonl', '-intervals.jsonl.partial'):
         (out / ('intervaltrace-0' + suffix)).unlink(missing_ok=True)
@@ -155,7 +210,7 @@ def main():
          *(['+interval-trace-csv'] if args.csv else []),
          *(['+interval-trace-raw'] if args.raw else []), '+permissive-off', elf], out / 'uartlog', env, cwd=out, timeout=1800)
     log = (out / 'uartlog').read_text(errors='replace')
-    if 'PASS interval-trace-smoke checksum=40832' not in log or 'FAIL interval-trace-smoke' in log:
+    if WORKLOAD[args.workload][2] not in log or 'FAIL interval-trace' in log:
         raise RuntimeError('target did not report PASS; see uartlog')
     if not re.search(r'IntervalTrace .*: epochs=\d+, intervals=[1-9]\d*, BBs=[1-9]\d*', log):
         raise RuntimeError('missing nonempty interval capture summary; see uartlog')
@@ -166,9 +221,11 @@ def main():
         run(['g++', '-std=c++17', '-O2', '-Wall', '-Wextra', '-Werror', '-I', bridges,
              bridges / 'test/standalone/intervaltrace_decoder_test.cc', '-o', decoder],
             out / 'decoder-build.log', env)
-        run([decoder, out / 'intervaltrace-0.bin', len(catalog['events']), catalog['catalog_id']],
+        stall = catalog.get('stall_event')
+        run([decoder, out / 'intervaltrace-0.bin', len(catalog['events']), catalog['catalog_id']] +
+            ([[e['name'] for e in catalog['events']].index(stall)] if stall else []),
             out / 'decoder-check.log', env)
-    check_capture(out, args.interval)
+    check_capture(out, args.interval, args.workload, elf, env)
     print(f'PASS: target workload, nonempty interval capture, and stream integrity; outputs in {out}')
 
 

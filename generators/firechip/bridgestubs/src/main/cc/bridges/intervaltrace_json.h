@@ -5,14 +5,17 @@
 #include <iomanip>
 #include <limits>
 #include <ostream>
+#include <stdexcept>
 
-// Writes one interval in interval JSONL version 3. Blocks are referenced by their
-// capture-local IDs, which the driver defines in the incrementally written catalog.
-// Version 3 equals version 2, except that with a stall event in the catalog every
-// cycle field excludes stall cycles (see intervaltrace_aggregator).
+// Writes one interval in interval JSONL version `version` (2 or 3). Blocks are
+// referenced by their capture-local IDs, which the driver defines in the
+// incrementally written catalog. Version 3 equals version 2, except that with a
+// stall event in the catalog every cycle field excludes stall cycles (see
+// intervaltrace_aggregator); version 2 cycle fields are elapsed (wall) cycles.
 inline void intervaltrace_write_features(std::ostream &out, const intervaltrace_features &f,
-    const std::map<intervaltrace_block_key, uint64_t> &block_ids) {
-  out << "{\"interval_format_version\":3,";
+    const std::map<intervaltrace_block_key, uint64_t> &block_ids, int version = 3) {
+  if (version != 2 && version != 3) throw std::invalid_argument("interval JSONL version must be 2 or 3");
+  out << "{\"interval_format_version\":" << version << ',';
 #define FIELD(name) out << "\"" #name "\":" << f.name << ','
   FIELD(epoch); FIELD(snapshot_id); FIELD(nominal_interval);
   FIELD(start_retired); FIELD(end_retired); FIELD(start_cycle); FIELD(end_cycle);

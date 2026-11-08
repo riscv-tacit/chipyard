@@ -219,7 +219,38 @@ def check_intervals(output, binary, stall=None):
         assert sum(f['instructions'] for f in intervals if f['epoch'] == e) == bb_instructions.get(e, 0)
         assert sum(not f['final'] for f in intervals if f['epoch'] == e) == nominal.get(e, 0)
     assert set(definitions.values()) == identities
+    check_wall_intervals(output, binary, reference, intervals, stall)
     return definitions, intervals
+
+
+def check_wall_intervals(output, binary, reference, busy, stall):
+    """+interval-trace-wall-cycles: interval JSONL version 2, the same intervals and
+    blocks as the default output, with every cycle field including stall cycles."""
+    catalog_text = (Path(output) / 'wall-7-blocks.csv').read_text()
+    lines = (Path(output) / 'wall-7-intervals.jsonl').read_text().splitlines()
+    assert catalog_text == reference[0]
+    if stall is None:
+        # Without a stall event the two bases agree; only the version differs.
+        assert lines == [l.replace('"interval_format_version":3', '"interval_format_version":2', 1)
+                         for l in reference[1]]
+    wall = [json.loads(line) for line in lines]
+    assert len(wall) == len(busy)
+    cycle_fields = {'start_cycle', 'end_cycle', 'cycles', 'attributed_cycles', 'unattributed_cycles',
+                    'ipc', 'interval_format_version', 'blocks'}
+    for w, b in zip(wall, busy):
+        assert w['interval_format_version'] == 2
+        assert {k: v for k, v in w.items() if k not in cycle_fields} == \
+            {k: v for k, v in b.items() if k not in cycle_fields}
+        assert [(x[0], x[1], x[3]) for x in w['blocks']] == [(x[0], x[1], x[3]) for x in b['blocks']]
+        assert all(x[2] >= y[2] for x, y in zip(w['blocks'], b['blocks']))
+        assert sum(x[2] for x in w['blocks']) == w['attributed_cycles']
+        assert w['attributed_cycles'] + w['unattributed_cycles'] == w['cycles']
+        assert w['cycles'] == w['end_cycle'] - w['start_cycle']
+        assert w['cycles'] - b['cycles'] == (w['counter_deltas'][stall] if stall is not None else 0)
+    for e in {f['epoch'] for f in wall}:
+        elapsed = [w[2] for kind, flags, w in decode(binary) if kind == 4 and w[0] == e]
+        assert sum(f['cycles'] for f in wall if f['epoch'] == e) == elapsed[-1]
+    return wall
 
 
 def stall_records():
@@ -269,7 +300,12 @@ for count, base, stall in cases:
             assert [[definitions[b[0]][:2]] + b[1:] for b in intervals[0]['blocks']] == \
                 [[(0x100, 0x104), 2, 2, 1], [(0x300, 0x300), 1, 1, 1], [(0x400, 0x400), 1, 5, 1]]
             assert intervals[1]['blocks'][0][1:] == [2, 5, 1] and intervals[0]['ipc'] == 0.5
-        print(f'PASS: interval JSONL version 3 agrees across output modes and with the raw packets '
+            # Wall cycles: elapsed, stall included.
+            wall = [json.loads(l) for l in (Path(output) / 'wall-7-intervals.jsonl').read_text().splitlines()]
+            assert [(f['start_cycle'], f['end_cycle'], f['cycles'], f['attributed_cycles'], f['unattributed_cycles'])
+                    for f in wall] == [(0, 20, 20, 20, 0), (20, 30, 10, 6, 4)]
+            assert [b[2] for b in wall[0]['blocks']] == [9, 6, 5] and wall[1]['blocks'][0][2] == 6
+        print(f'PASS: interval JSONL versions 3 and 2 (wall cycles) agree across output modes and with the raw packets '
               f'({count} counters, stall event {stall})')
 
 # The same PC range with a different privilege or partial flag is a different block.

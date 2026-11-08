@@ -309,7 +309,8 @@ and aggregates each interval directly. Its default outputs are:
   Version 1 had no `sources` and no per-event source fields.
 - `intervaltrace-0-blocks.csv`: capture-local, one-based block IDs and definitions:
   `id,start_pc,end_pc,privilege,partial_start,partial_end`. PCs are hexadecimal.
-- `intervaltrace-0-intervals.jsonl`: `interval_format_version: 3` records containing
+- `intervaltrace-0-intervals.jsonl`: `interval_format_version: 3` records (2 with
+  `+interval-trace-wall-cycles`) containing
   `[block_id,instructions,cycles,executions]` block entries, PMU deltas, endpoints,
   and IPC. IDs remain stable across intervals and epochs in the same capture.
   See [Interval JSONL format](#interval-jsonl-format).
@@ -321,7 +322,7 @@ These flushes empty userspace buffers, not a power-loss durability guarantee.
 JSONL retains the existing `.partial` naming until complete stream validation and
 successful output closes. No interrupted-capture recovery mode is added.
 
-`tools/interval-trace/check-compact-capture.py` validates a version 2 capture:
+`tools/interval-trace/check-compact-capture.py` validates a version 2 or 3 capture:
 block catalog references, interval continuity, measurement totals, PMU endpoints,
 and the smoke or SPEC workload results.
 
@@ -339,6 +340,11 @@ per interval in `counter_deltas`: `tile.cycles`' delta is `cycles` plus the stal
 event's delta. Before subtracting, the driver checks that the BBs' stall cycles
 equal the stall counter at every interval snapshot. Without a stall event,
 version 3 is numerically identical to version 2.
+
+With `+interval-trace-wall-cycles` the driver writes version 2 records instead:
+every cycle field counts elapsed (wall) cycles, stall cycles included, and
+`tile.cycles`' delta equals `cycles`. The driver checks the stall words the same
+way in both modes. Every record of a capture has the same version.
 
 #### Version 2
 
@@ -427,6 +433,9 @@ Options:
 - `+interval-trace-raw`: additionally save `PREFIX-<bridge-index>.bin`, preserving
   received bytes before validation for debugging/replay. Binary dumping is off by
   default; the bridge wire format remains unchanged.
+- `+interval-trace-wall-cycles`: interval cycle fields include stall cycles
+  (interval JSONL version 2). By default they exclude the catalog's stall event
+  (version 3); without a stall event the two agree.
 - `+interval-trace-interval=N`: positive 64-bit nominal instruction length.
 - `+interval-trace-trigger`: shorthand for the FireMarshal instruction trigger.
 - `+interval-trace-select=0|1|2|3`: select always-on, cycle, PC, or instruction triggering.
@@ -575,7 +584,8 @@ paths so a relocated checkout does not depend on a stale generated `env.sh`.
 annotations already in that recipe's FireSim generated directory. Add `--raw` to
 retain the optional binary dump and run the standalone decoder on it as well.
 Use `--trigger` for FireMarshal markers or `--trigger-select`, `--trigger-start`,
-and `--trigger-end` for the configurable modes. `--output DIR` keeps results from
+and `--trigger-end` for the configurable modes. `--wall-cycles` passes
+`+interval-trace-wall-cycles`. `--output DIR` keeps results from
 different trigger configurations in separate directories.
 The FireMarshal output list collects the default interval JSONL and catalog; add
 the CSV or `.bin` filenames to that list when collecting optional diagnostic dumps

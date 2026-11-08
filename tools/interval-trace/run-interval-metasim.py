@@ -37,7 +37,8 @@ def run(command, log, env, cwd=ROOT, timeout=None):
 
 def check_wfi(out, elf, env):
     """The wfi workload under the marker trigger: one epoch spanning the program's
-    measured region. Interval cycles exclude stall cycles, so they must equal the
+    measured region. Busy cycles (interval cycles in the default version 3; interval
+    cycles less stall cycles under --wall-cycles, version 2) must equal the
     program's mcycle difference up to the few instructions between its counter
     reads and the markers; stall cycles must cover its timer waits; and every
     interval with stall cycles must contain a block holding a WFI."""
@@ -56,15 +57,19 @@ def check_wfi(out, elf, env):
     intervals = [json.loads(line) for line in (out / 'intervaltrace-0-intervals.jsonl').read_text().splitlines()]
     if {f['epoch'] for f in intervals} != {1}:
         raise RuntimeError('expected one marker-triggered epoch')
-    busy = sum(f['cycles'] for f in intervals)
     stalled = sum(f['counter_deltas'][stall] for f in intervals)
     wall = sum(f['counter_deltas'][tile] for f in intervals)
+    version = intervals[0]['interval_format_version']
+    measured = sum(f['cycles'] for f in intervals)
+    busy = measured - stalled if version == 2 else measured
+    if version == 2 and measured != wall:
+        raise RuntimeError('version 2 interval cycles are not wall cycles')
     instructions = sum(f['instructions'] for f in intervals)
     for f in intervals:
         if f['counter_deltas'][stall] and not any(
                 blocks[b[0]][0] <= pc <= blocks[b[0]][1] for b in f['blocks'] for pc in wfi_pcs):
             raise RuntimeError(f'stall cycles in snapshot {f["snapshot_id"]} without a WFI block')
-    summary = dict(mcycle=mcycle, busy_cycles=busy, stall_cycles=stalled, wall_cycles=wall,
+    summary = dict(interval_format_version=version, mcycle=mcycle, busy_cycles=busy, stall_cycles=stalled, wall_cycles=wall,
                    minstret=minstret, instructions=instructions, mtime_us=mtime_us, waits_us=waits_us,
                    stalled_intervals=sum(bool(f['counter_deltas'][stall]) for f in intervals))
     print(json.dumps(summary, indent=2))
@@ -183,6 +188,8 @@ def main():
     parser.add_argument('--trigger', action='store_true', help='capture only between workload instruction markers')
     parser.add_argument('--csv', action='store_true', help='also retain and validate per-record CSVs')
     parser.add_argument('--raw', action='store_true', help='also retain and independently decode raw packets')
+    parser.add_argument('--wall-cycles', action='store_true',
+                        help='interval cycles include stall cycles (driver +interval-trace-wall-cycles)')
     parser.add_argument('--skip-build', action='store_true', help='rerun an already built metasimulator')
     parser.add_argument('--skip-target-elaboration', action='store_true',
                         help='reuse target FIRRTL/annotations already in the metasim generated directory')
@@ -256,7 +263,8 @@ def main():
          *([f'+interval-trace-start={args.trigger_start}'] if args.trigger_start is not None else []),
          *([f'+interval-trace-end={args.trigger_end}'] if args.trigger_end is not None else []),
          *(['+interval-trace-csv'] if args.csv else []),
-         *(['+interval-trace-raw'] if args.raw else []), '+permissive-off', elf], out / 'uartlog', env, cwd=out, timeout=args.sim_timeout)
+         *(['+interval-trace-raw'] if args.raw else []),
+         *(['+interval-trace-wall-cycles'] if args.wall_cycles else []), '+permissive-off', elf], out / 'uartlog', env, cwd=out, timeout=args.sim_timeout)
     log = (out / 'uartlog').read_text(errors='replace')
     if WORKLOAD[args.workload][2] not in log or 'FAIL interval-trace' in log:
         raise RuntimeError('target did not report PASS; see uartlog')

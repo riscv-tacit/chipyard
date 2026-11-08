@@ -120,10 +120,12 @@ int main(int argc, char **argv) {
     return std::vector<std::string>{"+interval-trace-file=" + (out / name).string(),
                                    "+interval-trace-interval=4294967298"};
   };
-  for (const std::string name : {"default", "raw-only", "normal", "raw"}) {
+  for (const std::string name : {"default", "raw-only", "normal", "raw", "wall"}) {
     const bool raw = name == "raw" || name == "raw-only";
     const bool csv = name == "normal" || name == "raw";
+    const bool wall = name == "wall";
     auto options = args(name.c_str());
+    if (wall) options.push_back("+interval-trace-wall-cycles");
     if (raw) options.push_back("+interval-trace-raw");
     if (csv) options.push_back("+interval-trace-csv");
     if (raw) options.push_back("+interval-trace-trigger");
@@ -146,7 +148,7 @@ int main(int argc, char **argv) {
     assert(std::count(live_catalog.begin(), live_catalog.end(), '\n') > 1);
     assert(!live_intervals.empty() && live_intervals.back() == '\n');
     const std::string live_text(live_intervals.begin(), live_intervals.end());
-    assert(live_text.find("\"interval_format_version\":3") != std::string::npos);
+    assert(live_text.find(wall ? "\"interval_format_version\":2" : "\"interval_format_version\":3") != std::string::npos);
     driver.finish();
     assert(!driver.terminate() && driver.exit_code() == 0);
     assert(stream.input().flushed && stream.input().position == bytes.size());
@@ -164,6 +166,8 @@ int main(int argc, char **argv) {
     assert(summary.find("epochs=") != std::string::npos && summary.find("partial=") != std::string::npos);
     assert(summary.find("bytes=" + std::to_string(bytes.size())) != std::string::npos);
     assert((summary.find("stall_cycles=") != std::string::npos) == (stall >= 0));
+    if (stall >= 0)
+      assert(summary.find(wall ? "(included in interval cycles)" : "(excluded from interval cycles)") != std::string::npos);
     const auto write_count = sim.writes.size();
     driver.finish(); driver.tick();
     assert(messages.text() == summary && sim.writes.size() == write_count);

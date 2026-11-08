@@ -49,6 +49,9 @@ private:
   const int stream_idx;
   const int stream_depth;
   const int64_t stall_counter;
+  // +interval-trace-wall-cycles: interval cycle fields include stall cycles
+  // (interval JSONL version 2) instead of excluding them (version 3, the default).
+  const bool wall_cycles;
   intervaltrace_aggregator aggregate;
   intervaltrace_decoder decoder;
   uint64_t nominal_interval = 1000000;

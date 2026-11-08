@@ -3,7 +3,8 @@
 
 Version 3 equals version 2, except that with a stall event in the catalog every
 cycle field excludes stall cycles; tile.cycles' delta is then cycles plus the
-stall event's delta.
+stall event's delta. The driver writes version 2 (wall cycles, stall included)
+when run with +interval-trace-wall-cycles.
 """
 import argparse
 import csv
@@ -50,7 +51,6 @@ def check_capture(prefix, interval):
             assert f['interval_format_version'] in (2, 3) and f['nominal_interval'] == interval
             assert version in (None, f['interval_format_version']), 'mixed interval format versions'
             version = f['interval_format_version']
-            assert stall is None or version == 3, 'a stall event requires interval format version 3'
             stalled = f['counter_deltas'][names.index(stall)] if stall is not None else 0
             assert len(f['counter_deltas']) == len(names)
             new_epoch = previous is None or previous['final']
@@ -76,7 +76,8 @@ def check_capture(prefix, interval):
             else:
                 assert f['ipc'] is None
             assert f['counter_deltas'][names.index('rob.instructions_retired')] == f['physical_retirements']
-            assert f['counter_deltas'][names.index('tile.cycles')] - stalled == f['cycles']
+            excluded = stalled if version == 3 else 0
+            assert f['counter_deltas'][names.index('tile.cycles')] - excluded == f['cycles']
             ids = set()
             instructions = cycles = executions = 0
             for block in f['blocks']:
@@ -110,10 +111,12 @@ def check(job, interval, smoke=False, expected_pass=None):
     summaries = re.findall(r'IntervalTrace intervaltrace-0: epochs=(\d+), intervals=(\d+), BBs=(\d+) .*?resets=(\d+), '
                            r'instructions=(\d+), cycles=(\d+), stream_bytes=\d+(?:, stall_cycles=(\d+))?', uart)
     assert len(summaries) == 1, 'missing or ambiguous driver summary'
-    # The driver summary reports elapsed cycles; interval cycles exclude stall cycles.
+    # The driver summary reports elapsed cycles; version 3 interval cycles exclude stall cycles,
+    # version 2 (+interval-trace-wall-cycles) include them.
     summary = tuple(int(x or 0) for x in summaries[0])
+    excluded = totals['stall_cycles'] if totals['interval_format_version'] == 3 else 0
     assert summary == (len(epochs), totals['nominal_intervals'], totals['bb_records'], 0, totals['instructions'],
-                       totals['cycles'] + totals['stall_cycles'], totals['stall_cycles'])
+                       totals['cycles'] + excluded, totals['stall_cycles'])
     comparisons = 0
     if smoke:
         assert 'PASS interval-trace-smoke checksum=40832' in uart and 'FAIL interval-trace-smoke' not in uart

@@ -1,6 +1,7 @@
 // See LICENSE for license details.
 #include "intervaltrace.h"
 #include "intervaltrace_json.h"
+#include <algorithm>
 #include <sstream>
 #include <cerrno>
 #include <charconv>
@@ -28,9 +29,11 @@ intervaltrace_t::intervaltrace_t(simif_t &sim, StreamEngine &stream,
     const std::vector<std::string> &event_names, int64_t stall_counter)
     : streaming_bridge_driver_t(sim, stream, &KIND), addrs(addrs),
       stream_idx(stream_idx), stream_depth(stream_depth), stall_counter(stall_counter),
+      wall_cycles(std::find(args.begin(), args.end(), "+interval-trace-wall-cycles") != args.end()),
+      // The decoder always checks the stall words; only the aggregates choose the cycle basis.
       aggregate([this](const intervaltrace_features &features) {
         write_features(features);
-      }, stall_counter),
+      }, wall_cycles ? -1 : stall_counter),
       decoder(counters, catalog_id, stall_counter, [this](unsigned kind, unsigned flags, uint64_t epoch,
                                          const std::vector<uint64_t> &words) {
         aggregate.consume(kind, flags, epoch, words);
@@ -55,6 +58,8 @@ intervaltrace_t::intervaltrace_t(simif_t &sim, StreamEngine &stream,
       dump_csv = true;
     else if (arg == "+interval-trace-raw")
       dump_raw = true;
+    else if (arg == "+interval-trace-wall-cycles")
+      ; // read by the initializer of wall_cycles
     else if (arg.compare(0, select_arg.size(), select_arg) == 0) {
       const auto selector = trigger_number(arg.substr(select_arg.size()), 10);
       if (selector > 3) throw std::runtime_error("interval-trace-select must be 0, 1, 2, or 3");
@@ -195,7 +200,7 @@ void intervaltrace_t::write_features(const intervaltrace_features &features) {
   if (std::fflush(block_catalog_output) != 0)
     throw std::runtime_error("cannot flush interval trace block catalog");
   std::ostringstream record;
-  intervaltrace_write_features(record, features, block_ids);
+  intervaltrace_write_features(record, features, block_ids, wall_cycles ? 2 : 3);
   const auto data = record.str();
   if (std::fwrite(data.data(), 1, data.size(), interval_output) != data.size() ||
       std::fflush(interval_output) != 0)
@@ -279,8 +284,11 @@ void intervaltrace_t::finish() {
                  ", instructions=%" PRIu64 ", cycles=%" PRIu64 ", stream_bytes=%" PRIu64,
                  prefix.c_str(), stats.epochs, stats.intervals, stats.basic_blocks,
                  stats.partial_basic_blocks, stats.resets, stats.instructions, stats.cycles, bytes_received);
-    // cycles above are elapsed target cycles; interval outputs exclude these stall cycles.
-    if (stall_counter >= 0) std::fprintf(stderr, ", stall_cycles=%" PRIu64, stats.stall_cycles);
+    // cycles above are elapsed target cycles; interval outputs exclude these stall
+    // cycles unless +interval-trace-wall-cycles is given.
+    if (stall_counter >= 0)
+      std::fprintf(stderr, ", stall_cycles=%" PRIu64 " (%s)", stats.stall_cycles,
+                   wall_cycles ? "included in interval cycles" : "excluded from interval cycles");
     std::fputc('\n', stderr);
   }
   // FireSim captures simulation_run's exit code before calling finish(). A late

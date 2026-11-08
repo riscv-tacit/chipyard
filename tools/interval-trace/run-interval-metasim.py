@@ -22,7 +22,8 @@ OUT = ROOT / 'tools/interval-trace/target/interval-metasim'
 WORKLOADS = ROOT / 'software/firemarshal/example-workloads'
 # Workload: (FireMarshal JSON, ELF, PASS line prefix).
 WORKLOAD = {'smoke': ('interval-trace-smoke.json', 'smoke.elf', 'PASS interval-trace-smoke checksum=40832'),
-            'wfi': ('interval-trace-wfi.json', 'wfi.elf', 'PASS interval-trace-wfi ')}
+            'wfi': ('interval-trace-wfi.json', 'wfi.elf', 'PASS interval-trace-wfi '),
+            'l2': ('interval-trace-l2.json', 'l2.elf', 'PASS interval-trace-l2 ')}
 RECIPES = ROOT / 'sims/firesim-staging/sample_config_build_recipes.yaml'
 
 
@@ -78,7 +79,51 @@ def check_wfi(out, elf, env):
     print('PASS: interval cycles match mcycle; stall cycles cover the WFI waits and lie in WFI blocks')
 
 
-def check_capture(out, interval, workload, elf, env):
+def check_l2(out, dts):
+    """The l2 workload under the marker trigger: it reads R new lines, then writes W new
+    lines, one access per 64-byte line, in memory nothing touched before. Each line
+    crosses the L2's outer port once (demand miss or L1 next-line prefetch), so L2 read
+    and write line misses are R and W plus a few instruction-fetch and prefetch lines.
+    At most an L2-full of the W dirty lines can stay in the L2, and at most an L1-full
+    in the L1, so the writebacks are bounded below. Cache sizes come from the target DTS."""
+    log = (out / 'uartlog').read_text(errors='replace')
+    fields = dict(re.findall(r'(\w+)=(\d+)', re.search(r'PASS interval-trace-l2 (.*)', log).group(1)))
+    reads, writes = int(fields['read_lines']), int(fields['write_lines'])
+    tree = dts.read_text()
+    l1_lines = int(re.search(r'd-cache-size = <(\d+)>', tree).group(1)) // 64
+    l2_lines = int(re.search(r'cache-level = <2>;\s*cache-sets = <\d+>;\s*cache-size = <(\d+)>', tree).group(1)) // 64
+    catalog = json.loads((out / 'intervaltrace-0.json').read_text())
+    if catalog.get('format_version') != 2 or [s['name'] for s in catalog['sources'] if s['shared']] != ['l2']:
+        raise RuntimeError('expected catalog version 2 with the shared source l2')
+    names = [e['name'] for e in catalog['events']]
+    intervals = [json.loads(line) for line in (out / 'intervaltrace-0-intervals.jsonl').read_text().splitlines()]
+    if {f['epoch'] for f in intervals} != {1}:
+        raise RuntimeError('expected one marker-triggered epoch')
+    total = {n: sum(f['counter_deltas'][i] for f in intervals) for i, n in enumerate(names)}
+    summary = dict(read_lines=reads, write_lines=writes, l1_lines=l1_lines, l2_lines=l2_lines,
+                   **{n: total[n] for n in names if n.startswith('l2.') or n.startswith('lsu.dcache')})
+    print(json.dumps(summary, indent=2))
+    (out / 'l2-check.json').write_text(json.dumps(summary, indent=2) + '\n')
+    # Instruction-fetch lines of the loops, next-line prefetches past each region, and
+    # lines dirtied before the region (stack, data) that are evicted inside it.
+    slack = 64
+    checks = [
+        ('l2.read_line_misses', reads <= total['l2.read_line_misses'] <= reads + slack),
+        ('l2.write_line_misses', writes <= total['l2.write_line_misses'] <= writes + slack),
+        ('l2.writebacks', writes - l2_lines <= total['l2.writebacks'] <= writes + slack),
+        ('lsu.dcache_line_misses', reads + writes <= total['lsu.dcache_line_misses'] <= reads + writes + slack),
+        ('lsu.dcache_load_line_misses + store_line_misses <= line_misses',
+         total['lsu.dcache_load_line_misses'] + total['lsu.dcache_store_line_misses'] <= total['lsu.dcache_line_misses']),
+        ('lsu.dcache_writebacks + probe_writebacks',
+         writes - l1_lines <= total['lsu.dcache_writebacks'] + total['lsu.dcache_probe_writebacks'] <= writes + slack),
+    ]
+    failed = [name for name, ok in checks if not ok]
+    if failed:
+        raise RuntimeError(f'L1/L2 event totals out of bounds: {", ".join(failed)}')
+    print('PASS: L2 and L1 data-cache line misses and writebacks match the access pattern')
+
+
+def check_capture(out, interval, workload, elf, env, dts):
     # Interval JSONL: block catalog, interval continuity, totals, PMU endpoints
     # against retirement and cycles, and the workload result.
     spec = importlib.util.spec_from_file_location(
@@ -88,6 +133,8 @@ def check_capture(out, interval, workload, elf, env):
     checker.check(out, interval, smoke=workload == 'smoke', expected_pass=WORKLOAD[workload][2])
     if workload == 'wfi':
         check_wfi(out, elf, env)
+    if workload == 'l2':
+        check_l2(out, dts)
     if not (out / 'intervaltrace-0-pmu.csv').exists():
         return
     # The driver validates framing/integrity before emitting CSV. These two architectural
@@ -128,6 +175,7 @@ def main():
     parser.add_argument('--jobs', type=int, default=8)
     parser.add_argument('--interval', type=int, default=1000)
     parser.add_argument('--max-cycles', type=int, default=2000000)
+    parser.add_argument('--sim-timeout', type=int, default=1800, help='wall-clock limit of the simulation run, seconds')
     parser.add_argument('--output', type=Path, help='results directory; default: target/interval-metasim/CORE')
     parser.add_argument('--trigger-select', type=int, choices=(0, 1, 2, 3), help='always/cycle/PC/instruction selector')
     parser.add_argument('--trigger-start', help='decimal cycle, hex PC, or hex mask+instruction')
@@ -208,7 +256,7 @@ def main():
          *([f'+interval-trace-start={args.trigger_start}'] if args.trigger_start is not None else []),
          *([f'+interval-trace-end={args.trigger_end}'] if args.trigger_end is not None else []),
          *(['+interval-trace-csv'] if args.csv else []),
-         *(['+interval-trace-raw'] if args.raw else []), '+permissive-off', elf], out / 'uartlog', env, cwd=out, timeout=1800)
+         *(['+interval-trace-raw'] if args.raw else []), '+permissive-off', elf], out / 'uartlog', env, cwd=out, timeout=args.sim_timeout)
     log = (out / 'uartlog').read_text(errors='replace')
     if WORKLOAD[args.workload][2] not in log or 'FAIL interval-trace' in log:
         raise RuntimeError('target did not report PASS; see uartlog')
@@ -225,7 +273,7 @@ def main():
         run([decoder, out / 'intervaltrace-0.bin', len(catalog['events']), catalog['catalog_id']] +
             ([[e['name'] for e in catalog['events']].index(stall)] if stall else []),
             out / 'decoder-check.log', env)
-    check_capture(out, args.interval, args.workload, elf, env)
+    check_capture(out, args.interval, args.workload, elf, env, out / 'target' / (base + '.dts'))
     print(f'PASS: target workload, nonempty interval capture, and stream integrity; outputs in {out}')
 
 

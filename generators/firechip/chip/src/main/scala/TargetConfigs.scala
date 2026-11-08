@@ -282,6 +282,14 @@ class FireSimMegaBoomV3IntervalTraceConfig extends Config(
   new WithFireSimConfigTweaks ++
   new chipyard.MegaBoomV3Config)
 
+// The same design as FireSimMegaBoomV3IntervalTraceConfig, under a name that marks the
+// second PMU event set: csr.stall_cycles (WFI/CEASE stalls excluded from interval cycles),
+// the L1 data-cache access, load/store line-miss and writeback events, and the L2's
+// outer-port read/write line misses and writebacks (catalog version 2). Bitstreams
+// built before these events used FireSimMegaBoomV3IntervalTraceConfig.
+class FireSimMegaBoomV3WithPMUV2IntervalTraceConfig extends Config(
+  new FireSimMegaBoomV3IntervalTraceConfig)
+
 class FireSimLargeBoomConfig extends Config(
   new WithDefaultFireSimBridges ++
   new WithFireSimConfigTweaks ++

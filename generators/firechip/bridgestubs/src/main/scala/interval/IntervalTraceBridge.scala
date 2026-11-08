@@ -5,7 +5,7 @@ package firechip.bridgestubs
 import chisel3._
 import firesim.lib.bridgeutils._
 import firechip.bridgeinterfaces._
-import pmu.PMUManifest
+import pmu.PMUCatalog
 
 /** Target endpoint for one tile's trace and PMU increments. Increment ports are
   * unsized; width inference sizes them from the connected increments.
@@ -24,8 +24,8 @@ class IntervalTraceBridge(key: IntervalTraceBridgeKey) extends BlackBox
     key.traceWidths.retireWidth.toString, key.traceWidths.iaddrWidth.toString,
     key.traceWidths.insnWidth.toString, key.traceWidths.wdataWidth.toString,
     key.traceWidths.causeWidth.toString, key.traceWidths.tvalWidth.toString) ++ key.events.flatMap { event =>
-    Seq(event.id.toString, event.name, event.unit, event.description)
-  } ++ key.stallEvent.map("stall:" + _)
+    Seq(event.id.toString, event.name, event.unit, event.description, event.source, event.sourceEvent)
+  } ++ key.stallEvent.map("stall:" + _) ++ key.sharedSources.map("shared:" + _)
   private val identity = identityFields.map(s => s"${s.length}:$s").mkString
   private val digest = java.security.MessageDigest.getInstance("SHA-256")
     .digest(identity.getBytes(java.nio.charset.StandardCharsets.UTF_8))
@@ -34,24 +34,25 @@ class IntervalTraceBridge(key: IntervalTraceBridgeKey) extends BlackBox
 }
 
 object IntervalTraceBridge {
-  /** Key for a tile's event list. stallEvent names the event whose cycles are
-    * reported per block as stall cycles (see IntervalTraceBridgeKey).
+  /** Key for a tile's merged event list (PMUCatalog.merge). stallEvent names the
+    * event whose cycles are reported per block as stall cycles (see IntervalTraceBridgeKey).
     */
-  def key(manifest: PMUManifest, traceWidths: TraceBundleWidths, retirementLatency: Int = 0,
+  def key(catalog: PMUCatalog, traceWidths: TraceBundleWidths, retirementLatency: Int = 0,
           stallEvent: Option[String] = None): IntervalTraceBridgeKey =
-    IntervalTraceBridgeKey(manifest.source, traceWidths,
-      manifest.events.map(e => IntervalPMUEvent(e.id, e.name, e.unit, e.description)),
-      retirementLatency = retirementLatency, stallEvent = stallEvent)
+    IntervalTraceBridgeKey(catalog.sources.head.name, traceWidths,
+      catalog.events.map(e => IntervalPMUEvent(e.id, e.name, e.unit, e.description, e.source, e.sourceEvent)),
+      retirementLatency = retirementLatency, stallEvent = stallEvent,
+      sharedSources = catalog.sources.tail.map(_.name))
 
   /** Attach to the existing exported tile trace without instantiating TracerV.
-    * Increments are in event-ID order, in the tile trace's clock domain.
+    * Increments are in catalog-ID order, in the tile trace's clock domain.
     * retirementLatency is the number of cycles by which the trace's retirement
     * lags the PMU increments; the FPGA widget aligns them. stallEvent must name
     * a one-bit event of unit cycles.
     */
-  def apply(tile_trace: testchipip.cosim.TileTraceIO, manifest: PMUManifest, increments: Seq[UInt],
+  def apply(tile_trace: testchipip.cosim.TileTraceIO, catalog: PMUCatalog, increments: Seq[UInt],
             retirementLatency: Int, stallEvent: Option[String] = None): IntervalTraceBridge = {
-    val bridgeKey = key(manifest, ConvertTraceBundleWidths(tile_trace.traceBundleWidths), retirementLatency, stallEvent)
+    val bridgeKey = key(catalog, ConvertTraceBundleWidths(tile_trace.traceBundleWidths), retirementLatency, stallEvent)
     require(increments.size == bridgeKey.events.size, "Interval PMU input count mismatch")
     // Widths are known here, before the bridge's unsized ports hide them.
     bridgeKey.stallIndex.foreach { index =>

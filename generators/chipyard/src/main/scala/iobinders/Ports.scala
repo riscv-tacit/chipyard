@@ -87,13 +87,13 @@ case class UARTTSIPort     (val getIO: () => UARTTSIIO)
 case class SuccessPort     (val getIO: () => Bool)
     extends Port[Bool]
 
-/** One tile's PMU event increments, in event-ID order. */
+/** One tile's PMU event increments, then those of the shared sources merged into it, in catalog-ID order. */
 class PMUTraceIO(incrementTypes: Seq[UInt]) extends Bundle {
   val increments = MixedVec(incrementTypes)
 }
 
 /** Sideband event port owned by the corresponding entry of TracePort. */
-case class PMUTracePort(val getIO: () => PMUTraceIO, manifest: pmu.PMUManifest, retirementLatency: Int,
+case class PMUTracePort(val getIO: () => PMUTraceIO, catalog: pmu.PMUCatalog, retirementLatency: Int,
                         stallEvent: Option[String] = None)
     extends Port[PMUTraceIO]
 

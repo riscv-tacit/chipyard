@@ -7,6 +7,8 @@ package firechip.bridgeinterfaces
   */
 object IntervalTraceFormat {
   val version = 1
+  /** Version of the catalog JSON (manifestJson); 2 adds sources and per-event source fields. */
+  val catalogVersion = 2
   val beatBits = 512
   val bb = 1
   val pmu = 2
@@ -37,14 +39,17 @@ object IntervalTraceFormat {
   // Length-prefixed fields give a stable identity independent of JSON formatting.
   def catalogId(key: IntervalTraceBridgeKey): BigInt = {
     val fields = Seq(key.source, key.traceWidths.toString, key.retirementLatency.toString) ++ key.events.flatMap(e =>
-      Seq(e.id.toString, e.name, e.unit, e.description)) ++ key.stallEvent.map("stall:" + _)
+      Seq(e.id.toString, e.name, e.unit, e.description, e.source, e.sourceEvent)) ++ key.stallEvent.map("stall:" + _) ++
+      key.sharedSources.map("shared:" + _)
     val bytes = fields.map(s => s"${s.length}:$s").mkString.getBytes(java.nio.charset.StandardCharsets.UTF_8)
     BigInt(1, java.security.MessageDigest.getInstance("SHA-256").digest(bytes).take(8))
   }
 
   def manifestJson(key: IntervalTraceBridgeKey): String = {
     val events = key.events.map(e =>
-      s"""{"id":${e.id},"name":${quote(e.name)},"unit":${quote(e.unit)},"description":${quote(e.description)}}""").mkString(",")
-    s"""{"format_version":$version,"source":${quote(key.source)},"catalog_id":${quote(catalogId(key).toString)},"counter_bits":64,"retirement_latency":${key.retirementLatency},"retire_width":${key.traceWidths.retireWidth},"iaddr_width":${key.traceWidths.iaddrWidth},"pmu_beats":${pmuBeats(key.events.size)},"stall_event":${key.stallEvent.map(quote).getOrElse("null")},"events":[$events]}"""
+      s"""{"id":${e.id},"name":${quote(e.name)},"unit":${quote(e.unit)},"description":${quote(e.description)},"source":${quote(e.source)},"source_event":${quote(e.sourceEvent)}}""").mkString(",")
+    val sources = (s"""{"name":${quote(key.source)},"shared":false}""" +:
+      key.sharedSources.map(name => s"""{"name":${quote(name)},"shared":true}""")).mkString(",")
+    s"""{"format_version":$catalogVersion,"source":${quote(key.source)},"catalog_id":${quote(catalogId(key).toString)},"counter_bits":64,"retirement_latency":${key.retirementLatency},"retire_width":${key.traceWidths.retireWidth},"iaddr_width":${key.traceWidths.iaddrWidth},"pmu_beats":${pmuBeats(key.events.size)},"stall_event":${key.stallEvent.map(quote).getOrElse("null")},"sources":[$sources],"events":[$events]}"""
   }
 }

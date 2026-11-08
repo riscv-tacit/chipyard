@@ -527,6 +527,16 @@ class WithTraceIOPunchthrough extends OverrideLazyIOBinder({
       val pmuPorts = p(ExportPMUTrace).map { pmuTrace =>
         val tileIds = chipyardSystem.traceNodes.keys.toSeq
         require(tileIds.size == trace.traces.size, "Trace port and tile identities disagree")
+        // Shared sources (e.g. the L2) are merged into every traced tile's events. Their
+        // increments are sampled on the tile's clock, so the tile must share their clock.
+        val shared = chipyardSystem.pmuSharedEvents.map(_.bore())
+        if (shared.nonEmpty) tileIds.foreach { tileId =>
+          chipyardSystem.tileAttachParams.find(_.tileParams.tileId == tileId).map(_.crossingParams.crossingType) match {
+            case Some(_: SynchronousCrossing) =>
+            case other => throw new IllegalArgumentException(
+              s"PMU trace tile $tileId merges shared PMU sources and needs a SynchronousCrossing, got $other")
+          }
+        }
         tileIds.map { tileId =>
           val events = chipyardSystem.totalTiles(tileId).module match {
             case m: pmu.CanHavePMUEvents => m.pmuEvents.getOrElse(
@@ -535,10 +545,12 @@ class WithTraceIOPunchthrough extends OverrideLazyIOBinder({
               s"PMU trace tile $tileId does not provide PMU events: ${other.getClass.getName}")
           }
           val local = events.bore()
-          val pmu_events = IO(Output(new PMUTraceIO(local.increments.map(chiselTypeOf(_)))))
+          val catalog = pmu.PMUCatalog.merge(local.manifest, shared.map(_.manifest))
+          val increments = local.increments ++ shared.flatMap(_.increments)
+          val pmu_events = IO(Output(new PMUTraceIO(increments.map(chiselTypeOf(_)))))
             .suggestName(s"pmu_events_$tileId")
-          pmu_events.increments.zip(local.increments).foreach { case (sink, source) => sink := source }
-          PMUTracePort(() => pmu_events, local.manifest, pmuTrace.retirementLatency, pmuTrace.stallEvent)
+          pmu_events.increments.zip(increments).foreach { case (sink, source) => sink := source }
+          PMUTracePort(() => pmu_events, catalog, pmuTrace.retirementLatency, pmuTrace.stallEvent)
         }
       }.getOrElse(Nil)
       TracePort(() => trace, cfg, pmuPorts)

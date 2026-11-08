@@ -9,13 +9,17 @@ import firrtl.annotations.HasSerializationHints
 /** Event metadata crossing the Chipyard / Golden Gate JVM boundary.
   * This is a bridge constructor value, not a second event-registration API.
   */
-case class IntervalPMUEvent(id: Int, name: String, unit: String, description: String) {
+case class IntervalPMUEvent(id: Int, name: String, unit: String, description: String,
+                            source: String, sourceEvent: String) {
   require(id >= 0, "Interval PMU event ID must be nonnegative")
   require(name.trim.nonEmpty, "Interval PMU event name must be nonempty")
 }
 
 /** One tile, one observation clock/reset, one ordered PMU catalog.
   * No Chisel handles or PMU hardware types may be serialized in this key.
+  * The catalog lists the tile's own events (source = the tile, names unchanged)
+  * then those of each shared source in sharedSources order (for example the L2),
+  * named `<source>.<sourceEvent>`. Shared counts are system-wide, not this tile's.
   * stallEvent names a one-bit cycle event during which the core is stalled
   * without advancing its own cycle counter (WFI). The widget reports each
   * block's stall cycles beside its elapsed cycles.
@@ -27,6 +31,7 @@ case class IntervalTraceBridgeKey(
   schemaVersion: Int = 1,
   retirementLatency: Int = 0,
   stallEvent: Option[String] = None,
+  sharedSources: Seq[String] = Nil,
 ) extends HasSerializationHints {
   require(retirementLatency == 0 || retirementLatency == 1, "Interval trace supports zero or one cycle of retirement latency")
   require(schemaVersion == 1, "Unsupported interval bridge interface schema")
@@ -41,9 +46,17 @@ case class IntervalTraceBridgeKey(
   require(events.nonEmpty, "Interval bridge requires a PMU catalog")
   require(events.map(_.id) == events.indices, "Interval PMU IDs must be dense and ordered")
   require(events.map(_.name).distinct.size == events.size, "Duplicate interval PMU event names")
+  require((source +: sharedSources).distinct.size == 1 + sharedSources.size, "Duplicate interval PMU source names")
+  require(events.map(_.source).distinct == source +: sharedSources,
+    "Interval PMU events must be grouped by source: the tile's first, then sharedSources in order")
+  events.foreach { e =>
+    val expected = if (e.source == source) e.sourceEvent else s"${e.source}.${e.sourceEvent}"
+    require(e.name == expected, s"Interval PMU event '${e.name}' of source ${e.source} must be named '$expected'")
+  }
   stallEvent.foreach { name =>
     val event = events.find(_.name == name)
     require(event.nonEmpty, s"Interval stall event '$name' is not in the catalog of $source")
+    require(event.get.source == source, s"Interval stall event '$name' must be one of the tile's own events")
     require(event.get.unit == "cycles", s"Interval stall event '$name' must have unit cycles, not ${event.get.unit}")
   }
 

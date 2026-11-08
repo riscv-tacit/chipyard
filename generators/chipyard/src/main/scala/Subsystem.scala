@@ -77,6 +77,7 @@ class ChipyardSubsystem(implicit p: Parameters) extends BaseSubsystem
     with HasHierarchicalElements
     with CanHaveHTIF
     with CanHaveChosenInDTS
+    with HasPMUSources
 {
   def coreMonitorBundles = totalTiles.values.map {
     case r: RocketTile => r.module.core.rocketImpl.coreMonitorBundle
@@ -121,6 +122,7 @@ class ChipyardSubsystem(implicit p: Parameters) extends BaseSubsystem
 }
 
 class ChipyardSubsystemModuleImp[+L <: ChipyardSubsystem](_outer: L) extends BaseSubsystemModuleImp(_outer)
-    with HasHierarchicalElementsRootContextModuleImp {
+    with HasHierarchicalElementsRootContextModuleImp
+    with HasPMUSourcesModuleImp {
   override lazy val outer = _outer
 }

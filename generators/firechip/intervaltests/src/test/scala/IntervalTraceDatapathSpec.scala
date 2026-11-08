@@ -18,7 +18,8 @@ class IntervalTraceDatapathSpec extends AnyFlatSpec with ChiselScalatestTester {
   // stall: event ID of a cycle event named as the key's stall event.
   private def key(lanes: Int, counters: Int, stall: Option[Int] = None): IntervalTraceBridgeKey = IntervalTraceBridgeKey("test_tile",
     TraceBundleWidths(lanes, 40, 32, None, 64, 40),
-    (0 until counters).map(i => IntervalPMUEvent(i, s"event_$i", if (stall.contains(i)) "cycles" else "events", "Test event")),
+    (0 until counters).map(i => IntervalPMUEvent(i, s"event_$i", if (stall.contains(i)) "cycles" else "events", "Test event",
+      "test_tile", s"event_$i")),
     stallEvent = stall.map(i => s"event_$i"))
 
   private def decode(beats: Seq[BigInt], n: Int, bbCount: Int = 4): Vector[Record] = {

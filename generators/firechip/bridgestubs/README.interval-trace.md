@@ -44,7 +44,38 @@ during exactly these cycles; the tile clock keeps running. The bridge key carrie
 the event's name; it must be in the catalog with unit `cycles`, and the target-side
 `IntervalTraceBridge.apply` checks that its increment is one bit wide.
 
-The bridge key carries each tile's event list (ID, name, unit and description).
+**Shared sources.** Events from outside the tile, such as the L2, come from their
+own PMU registry. `WithBoomIntervalTrace` includes
+[`WithInclusiveCachePMUEvents`](../../chipyard/src/main/scala/config/fragments/PMUFragments.scala),
+which places `InclusiveCacheOuterEvents` (source `l2`) on the L2's outer TileLink
+port, between the L2 and the cache cork, and declares `l2` in
+`PMUSharedSourcesKey`. It counts, summed over L2 banks:
+
+| Event | Counts |
+|---|---|
+| `l2.read_line_misses` | Outer `AcquireBlock` `NtoB`: lines read from memory with read permission |
+| `l2.write_line_misses` | Outer `AcquireBlock` `NtoT`: lines read from memory with write permission |
+| `l2.writebacks` | Outer `ReleaseData` (first beat): dirty lines evicted to memory |
+
+Upgrades (`BtoT`) and full-line writes (`AcquirePerm`, e.g. block-device DMA) read
+nothing from memory and are not counted, so the two miss events times 64 bytes are
+the L2's memory read traffic. These counts are system-wide: every device that uses
+the L2 contributes. The fragment replaces the coherence manager set by
+`WithInclusiveCache` (a copy of its function with the counting node added), so it
+must sit above any `WithInclusiveCache` in a config; a config that changes the L2
+below it reapplies the fragment on top. Elaboration fails if a declared shared
+source was not built.
+
+The trace IOBinder merges every shared source into each traced tile's catalog: the
+tile's own events first, with their names and IDs unchanged, then each shared
+source in declared order, named `<source>.<event>`. A traced tile with shared
+sources must use a `SynchronousCrossing`, since their increments are sampled on the
+tile's clock. Chipyard also writes `<design>.pmu-sources.json`, an index of every
+PMU source (tiles by tile ID, then shared sources), each with its `.pmu.json`
+manifest and that file's SHA-256.
+
+The bridge key carries the merged event list (ID, name, unit, description, source
+and the event's name within its source) and the shared source names.
 The bridge's increment ports are unsized on both sides. On the target side, FIRRTL
 width inference sizes them from the tile's increments while Golden Gate lowers the
 target; Golden Gate then builds each channel from those port widths, and the
@@ -52,8 +83,8 @@ FPGA-side widget's increment inputs are inferred from the channels they connect 
 
 Harness binders use first-match selection. Put `WithBoomIntervalTrace` before a
 fallback `TracePort` binder. Stacking separate TracePort binders does not enable
-multiple consumers. BOOM v4, cloned tiles, and counters outside the tile domain
-are not supported by this attachment.
+multiple consumers. BOOM v4, cloned tiles, and shared sources in another clock
+domain are not supported by this attachment.
 
 BOOM's architectural trace is delayed one target cycle relative to raw PMU events.
 `IntervalTraceAligner` in the FPGA widget delays increments and reset by one
@@ -271,7 +302,11 @@ Epoch start precedes baseline; epoch end follows the final PMU and partial BB.
 [`intervaltrace_t`](src/main/cc/bridges/intervaltrace.cc) validates incoming packets
 and aggregates each interval directly. Its default outputs are:
 
-- `intervaltrace-0.json`: the existing PMU/wire catalog (wire format version 1).
+- `intervaltrace-0.json`: the PMU catalog, `format_version: 2` (the wire format
+  stays version 1). It lists `sources` (`name`, `shared`; the traced tile first)
+  and, for each event, `id`, `name`, `unit`, `description`, `source` and
+  `source_event`, plus `stall_event`, `catalog_id` and the stream parameters.
+  Version 1 had no `sources` and no per-event source fields.
 - `intervaltrace-0-blocks.csv`: capture-local, one-based block IDs and definitions:
   `id,start_pc,end_pc,privilege,partial_start,partial_end`. PCs are hexadecimal.
 - `intervaltrace-0-intervals.jsonl`: `interval_format_version: 3` records containing
@@ -500,7 +535,26 @@ From the Chipyard root, with the checkout's conda toolchain installed:
 .conda-env/bin/python3 tools/interval-trace/run-interval-metasim.py --core mega
 # Stall accounting: three timer sleeps in WFI between the markers
 .conda-env/bin/python3 tools/interval-trace/run-interval-metasim.py --core mega --workload wfi --trigger --csv
+# L1 data-cache and L2 events: new lines read, then written past the L2's capacity
+.conda-env/bin/python3 tools/interval-trace/run-interval-metasim.py --core mega --workload l2 --trigger \
+  --max-cycles 6000000 --sim-timeout 3600
 ```
+
+The `l2` workload (`interval-trace-l2`) reads 2,048 new lines and then writes
+18,432 new lines, one access per 64-byte line, in memory nothing touched before.
+Each line crosses the L2's outer port once, whether a demand miss or the L1's
+next-line prefetcher fetches it. Before the end marker it executes a `fence` and a short
+loop: stores reach the L1 after they retire, and without the drain about 30 of the
+last stores' misses fall after the capture ends. The runner reads the L1 and L2 sizes from the
+target's DTS and checks the capture's totals: L2 read and write line misses equal
+the lines read and written plus at most 64; L2 writebacks are at least the lines
+written minus the L2's capacity; the L1's line misses equal all lines touched plus
+at most 64, with the load/store split no larger than that total; and the L1's
+writebacks plus probe writebacks are at least the lines written minus the L1's
+capacity. The split itself is not checked against the access pattern, because
+prefetched lines belong to neither part. On MegaBOOM metasim the totals were: L2
+read/write line misses 2,054/18,436, L2 writebacks 11,003, L1 line misses 20,484
+(2,048 load, 18,433 store), L1 writebacks 17,615 plus 325 probe writebacks.
 
 The `wfi` workload (`interval-trace-wfi`) runs in M-mode with interrupts globally
 disabled, so WFI wakes on the pending timer interrupt without a trap. It prints its

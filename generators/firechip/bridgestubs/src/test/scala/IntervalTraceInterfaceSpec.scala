@@ -6,7 +6,7 @@ import chisel3._
 import firechip.bridgeinterfaces._
 import firesim.lib.bridgeutils.{BridgeAnnotation, PipeBridgeChannel}
 import org.scalatest.flatspec.AnyFlatSpec
-import pmu.{PMUEvent, PMUManifest}
+import pmu.{PMUCatalog, PMUEvent, PMUManifest}
 
 import java.nio.file.{Files, Paths}
 
@@ -26,8 +26,9 @@ private class IntervalBridgeHarness(keys: Seq[IntervalTraceBridgeKey]) extends R
 
 class IntervalTraceInterfaceSpec extends AnyFlatSpec {
   private val events = Seq(
-    IntervalPMUEvent(0, "rob.instructions_retired", "instructions", "Architectural retirements"),
-    IntervalPMUEvent(1, "tile.cycles", "cycles", "Tile cycles"))
+    IntervalPMUEvent(0, "rob.instructions_retired", "instructions", "Architectural retirements",
+      "boom_tile_0", "rob.instructions_retired"),
+    IntervalPMUEvent(1, "tile.cycles", "cycles", "Tile cycles", "boom_tile_0", "tile.cycles"))
   private val traceWidths = TraceBundleWidths(4, 40, 32, None, 64, 40)
   private val key = IntervalTraceBridgeKey("boom_tile_0", traceWidths, events)
 
@@ -39,7 +40,7 @@ class IntervalTraceInterfaceSpec extends AnyFlatSpec {
 
   "Interval trace metadata" should "reject invalid catalogs" in {
     intercept[IllegalArgumentException] { key.copy(events = events.reverse) }
-    intercept[IllegalArgumentException] { key.copy(events = events.updated(1, events(1).copy(name = events.head.name))) }
+    intercept[IllegalArgumentException] { key.copy(events = events.updated(1, events(1).copy(name = events.head.name, sourceEvent = events.head.name))) }
     intercept[IllegalArgumentException] { key.copy(events = Seq.empty) }
     intercept[IllegalArgumentException] { key.copy(traceWidths = traceWidths.copy(retireWidth = 0)) }
     intercept[IllegalArgumentException] { key.copy(traceWidths = traceWidths.copy(iaddrWidth = 65)) }
@@ -68,12 +69,38 @@ class IntervalTraceInterfaceSpec extends AnyFlatSpec {
 
   it should "convert a tile's event list into a bridge key" in {
     val manifest = PMUManifest("boom_tile_0", Vector(PMUEvent(0, "retired", "instructions", "Retired")))
-    val converted = IntervalTraceBridge.key(manifest, traceWidths, retirementLatency = 1)
-    assert(converted.source == "boom_tile_0" && converted.retirementLatency == 1)
-    assert(converted.events == Seq(IntervalPMUEvent(0, "retired", "instructions", "Retired")))
+    val converted = IntervalTraceBridge.key(PMUCatalog.merge(manifest), traceWidths, retirementLatency = 1)
+    assert(converted.source == "boom_tile_0" && converted.retirementLatency == 1 && converted.sharedSources.isEmpty)
+    assert(converted.events == Seq(IntervalPMUEvent(0, "retired", "instructions", "Retired", "boom_tile_0", "retired")))
     assert(IntervalTraceFormat.manifestJson(converted).contains("\"name\":\"retired\""))
     val stallManifest = PMUManifest("boom_tile_0", Vector(PMUEvent(0, "csr.stall_cycles", "cycles", "Stall")))
-    assert(IntervalTraceBridge.key(stallManifest, traceWidths, 1, Some("csr.stall_cycles")).stallIndex.contains(0))
+    assert(IntervalTraceBridge.key(PMUCatalog.merge(stallManifest), traceWidths, 1, Some("csr.stall_cycles"))
+      .stallIndex.contains(0))
+  }
+
+  it should "merge shared sources after the tile's events, with prefixed names and catalog version 2" in {
+    val tile = PMUManifest("boom_tile_0", Vector(PMUEvent(0, "csr.stall_cycles", "cycles", "Stall"),
+      PMUEvent(1, "tile.cycles", "cycles", "Cycles")))
+    val l2 = PMUManifest("l2", Vector(PMUEvent(0, "read_line_misses", "lines", "Reads"),
+      PMUEvent(1, "writebacks", "lines", "Writebacks")))
+    val merged = IntervalTraceBridge.key(PMUCatalog.merge(tile, Seq(l2)), traceWidths, 1, Some("csr.stall_cycles"))
+    assert(merged.sharedSources == Seq("l2"))
+    assert(merged.events.map(e => (e.id, e.name, e.source, e.sourceEvent)) == Seq(
+      (0, "csr.stall_cycles", "boom_tile_0", "csr.stall_cycles"), (1, "tile.cycles", "boom_tile_0", "tile.cycles"),
+      (2, "l2.read_line_misses", "l2", "read_line_misses"), (3, "l2.writebacks", "l2", "writebacks")))
+    val json = ujson.read(IntervalTraceFormat.manifestJson(merged))
+    assert(json("format_version").num == 2)
+    assert(json("sources").arr.map(s => (s("name").str, s("shared").bool)) == Seq(("boom_tile_0", false), ("l2", true)))
+    assert(json("events")(2)("source").str == "l2" && json("events")(2)("source_event").str == "read_line_misses")
+    val unshared = IntervalTraceBridge.key(PMUCatalog.merge(tile), traceWidths, 1, Some("csr.stall_cycles"))
+    assert(IntervalTraceFormat.catalogId(merged) != IntervalTraceFormat.catalogId(unshared))
+    // Distinct catalogs must not share a stub defname.
+    assert(elaborate(Seq(merged, unshared)).collect { case a: BridgeAnnotation => a.target.module }.distinct.size == 2)
+    // A shared event cannot be the stall event; names must follow the source rule; sources must be in order.
+    intercept[IllegalArgumentException] { merged.copy(stallEvent = Some("l2.writebacks")) }
+    intercept[IllegalArgumentException] { merged.copy(events = merged.events.updated(2, merged.events(2).copy(name = "read_line_misses"))) }
+    intercept[IllegalArgumentException] { merged.copy(sharedSources = Nil) }
+    intercept[IllegalArgumentException] { merged.copy(sharedSources = Seq("l2", "boom_tile_0")) }
   }
 
   "Interval trace stub" should "preserve narrow inputs and annotate every field in one clock domain" in {
@@ -103,9 +130,11 @@ class IntervalTraceInterfaceSpec extends AnyFlatSpec {
   }
 
   it should "keep heterogeneous port shapes and same-shape tile catalogs distinct" in {
-    val keys = Seq(key, key.copy(source = "boom_tile_1"),
-      key.copy(source = "boom_tile_2", traceWidths = traceWidths.copy(retireWidth = 2, iaddrWidth = 64),
-        events = Seq(events.head)),
+    // The events name their source, so moving a catalog to another tile renames it there too.
+    def onTile(tile: String, tileEvents: Seq[IntervalPMUEvent] = events) =
+      key.copy(source = tile, events = tileEvents.map(_.copy(source = tile)))
+    val keys = Seq(key, onTile("boom_tile_1"),
+      onTile("boom_tile_2", Seq(events.head)).copy(traceWidths = traceWidths.copy(retireWidth = 2, iaddrWidth = 64)),
       key.copy(traceWidths = traceWidths.copy(wdataWidth = Some(64))),
       key.copy(traceWidths = traceWidths.copy(tvalWidth = 64)))
     val first = elaborate(keys).collect { case a: BridgeAnnotation => a }

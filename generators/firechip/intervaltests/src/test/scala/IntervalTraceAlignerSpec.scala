@@ -9,7 +9,7 @@ import org.scalatest.flatspec.AnyFlatSpec
 class IntervalTraceAlignerSpec extends AnyFlatSpec with ChiselScalatestTester {
   private def key(latency: Int) = IntervalTraceBridgeKey("tile",
     TraceBundleWidths(1, 40, 32, None, 64, 40),
-    Seq(IntervalPMUEvent(0, "retired", "instructions", "Retirements")), retirementLatency = latency)
+    Seq(IntervalPMUEvent(0, "retired", "instructions", "Retirements", "tile", "retired")), retirementLatency = latency)
 
   private def drive(dut: IntervalTraceAligner, increment: Int, targetReset: Boolean, pc: Int): Unit = {
     dut.io.in.valid.poke(true.B)

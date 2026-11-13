@@ -7,8 +7,8 @@ The target interface, BOOM/Chipyard routing, independent harness binder, FPGA ho
 widget, and interval-aggregating host driver are implemented. The driver writes
 per-interval basic-block and PMU aggregates in interval JSONL version 2.
 Validation covers target elaboration, RTL unit tests, the Chisel 6-to-Chisel 3
-bridge key handoff, and a complete Large BOOM FireSim Verilator metasimulation.
-MegaBOOM metasimulation and AWS F2 runs of this version remain unvalidated.
+bridge key handoff, Large BOOM and MegaBOOM FireSim Verilator metasimulations
+(the workloads below), and MegaBOOM SPEC CPU2017 runs on AWS F2.
 
 ## Attachment
 
@@ -109,8 +109,10 @@ the bridge to a tile's trace and event-ID-ordered increments.
 reuses the shared trace bundle:
 
 - Per-slot `valid` is architectural retirement. Lane order and holes are retained.
-  Original instruction bits identify RV64 conditional branches, JAL/JALR, their
-  compressed forms, and trap returns. Taken and not-taken branches both end BBs.
+  Original instruction bits identify the instructions that end a BB: RV64
+  conditional branches, JAL/JALR and their compressed forms, the trap returns
+  (`uret`, `sret`, `mret`, `dret`), and the environment calls (`ecall`, `ebreak`,
+  `c.ebreak`). Taken and not-taken branches both end BBs.
 - PC and instruction size identify unexpected sequential-PC discontinuities.
   Narrow PCs are sign-extended into 64-bit records. Counts come from valid slots,
   never PC subtraction.
@@ -238,8 +240,20 @@ cycles are excluded, and a new baseline starts when reset deasserts if capture
 remains enabled in the default, untriggered mode. Host reset/abrupt simulator abort can still truncate a stream;
 the decoder rejects missing epoch end or an incomplete packet.
 
+A BB's privilege is the privilege its instructions ran under. BOOM v3 tags each
+retired instruction with the privilege after it executes, which differs for the
+trap returns and environment calls: they execute in the CSR unit before commit
+and retire tagged with the privilege they switch to. Environment calls also raise
+no trap flag. The widget therefore gives each of these instructions the tag of
+the instruction retired before it, and takes the next instruction's expected
+privilege from its own tag. A system call, SBI call, breakpoint or trap return
+thus ends its BB like any other control transfer, and the next BB starts at the
+handler or return address under the new privilege, with no partial flags. The
+first instruction of a capture epoch keeps its own tag.
+
 Unexpected PC discontinuities or privilege changes split an open BB into flagged
-partial blocks. Trap flags are interpreted as cycle-level observations: process
+partial blocks. With the rules above, a fault or interrupt (which flags its cycle)
+is the remaining expected source of partial blocks inside an epoch. Trap flags are interpreted as cycle-level observations: process
 that cycle's architectural retirements first, then flush its remaining partial
 block and mark the next start partial. Partial-end records do not close a nominal
 interval; their instructions still contribute to its progress. The next completed
@@ -496,7 +510,7 @@ the rejection of invalid streams.
 
 RTL tests cover holes, idle cycles, overshoot debt, same-cycle boundaries, coherent
 PMU capture, 18/19-counter padding, wraparound, compressed instructions, traps,
-privilege/PC discontinuities, reset/restart, host-only tail flushing, capture
+environment calls and trap returns, privilege/PC discontinuities, reset/restart, host-only tail flushing, capture
 configuration, and stalled-beat stability against a software reference.
 
 To elaborate a connected target (without building a metasimulator):
@@ -547,7 +561,23 @@ From the Chipyard root, with the checkout's conda toolchain installed:
 # L1 data-cache and L2 events: new lines read, then written past the L2's capacity
 .conda-env/bin/python3 tools/interval-trace/run-interval-metasim.py --core mega --workload l2 --trigger \
   --max-cycles 6000000 --sim-timeout 3600
+# Block rules across privilege transitions (226 instructions, so a short interval)
+.conda-env/bin/python3 tools/interval-trace/run-interval-metasim.py --core mega --workload traps --csv --interval 50
 ```
+
+The `traps` workload (`interval-trace-traps`) runs from M-mode with paging off,
+drops to U-mode and exercises U→S system calls returning with `sret`, an S→M
+call returning with `mret`, a system call restarted by `sret` straight onto an
+`ecall`, `ebreak` and `c.ebreak` handled in M-mode, and an illegal-instruction
+fault. It prints `PASS interval-trace-traps` when its handlers counted the
+expected traps. The runner checks only that marker and the capture's general
+validity; the block sequence is read from `intervaltrace-0-bb.csv`. On MegaBOOM
+metasim with `--interval 50`, the capture has 59 BB records. Three are partial:
+the capture's first and last blocks and the block cut by the illegal-instruction
+fault, which carries the trap flag. Before the environment-call rules the same
+run produced 76 records, 47 of them partial, with privilege-change and
+PC-discontinuity splits around every `ecall`, `ebreak` and trap return; retired
+instructions and cycles were unchanged.
 
 The `l2` workload (`interval-trace-l2`) reads 2,048 new lines and then writes
 18,432 new lines, one access per 64-byte line, in memory nothing touched before.

@@ -117,7 +117,8 @@ class IntervalTraceDatapathSpec extends AnyFlatSpec with ChiselScalatestTester {
     out += snapshot(0, 0, 0, 0, baseline)
     var pending = Vector.empty[Slot]
     var partial = true
-    var previousPriv: Option[Int] = None
+    var previousPriv: Option[Int] = None // privilege of the last retired instruction
+    var previousTag = 0 // its trace tag
     var retired = 0
     var cycle = 0
     var lastBoundaryCycle = 0
@@ -141,8 +142,13 @@ class IntervalTraceDatapathSpec extends AnyFlatSpec with ChiselScalatestTester {
       if ((x & 3) != 3) {
         ((x & 3) == 1 && Set(5L, 6L, 7L)((x >> 13) & 7)) ||
           ((x & 3) == 2 && ((x >> 13) & 7) == 4 && ((x >> 7) & 31) != 0 && ((x >> 2) & 31) == 0)
-      } else Set(0x63L, 0x6fL, 0x67L)(x & 127) || Set(0x30200073L, 0x10200073L)(x)
-    }
+      } else Set(0x63L, 0x6fL, 0x67L)(x & 127) || trapReturn(x)
+    } || environmentCall(word)
+    def trapReturn(x: Long): Boolean = Set(0x00200073L, 0x10200073L, 0x30200073L, 0x7b200073L)(x)
+    // ecall, ebreak, c.ebreak
+    def environmentCall(word: BigInt): Boolean = Set(0x73L, 0x100073L, 0x9002L)(word.toLong)
+    // These instructions' tags carry the privilege they switch to; they run under the previous one.
+    def tagLeads(word: BigInt): Boolean = trapReturn(word.toLong) || environmentCall(word)
     input.foreach { c =>
       assert(!c.reset)
       cycle += 1
@@ -150,8 +156,11 @@ class IntervalTraceDatapathSpec extends AnyFlatSpec with ChiselScalatestTester {
       val blocks = ArrayBuffer.empty[Record]
       val snapshots = ArrayBuffer.empty[Record]
       val groupEnd = retired + c.slots.flatten.size
-      c.slots.flatten.foreach { s =>
-        val privChange = previousPriv.exists(_ != s.priv)
+      c.slots.flatten.foreach { tagged =>
+        val s = if (previousPriv.nonEmpty && tagLeads(tagged.insn)) tagged.copy(priv = previousTag) else tagged
+        // Unexpected: not the change a preceding xRET or environment call made.
+        val privChange = previousPriv.nonEmpty && previousTag != s.priv
+        previousTag = tagged.priv
         val gap = pending.lastOption.exists(p => p.pc + (if ((p.insn & 3) == 3) 4 else 2) != s.pc)
         if (pending.nonEmpty && (gap || privChange)) {
           blocks += block(partialEnd | (if (privChange) privilegeChange else discontinuity))
@@ -418,7 +427,7 @@ class IntervalTraceDatapathSpec extends AnyFlatSpec with ChiselScalatestTester {
       val slots = (0 until 4).map { lane =>
         if (random.nextBoolean()) None else {
           if (cycle % 9 == 0 && lane == 2) pc += 0x100
-          val word = Vector(0x13, 0x1, 0x63, 0x6f, 0xa001, 0xc001, 0x8082)(random.nextInt(7))
+          val word = Vector(0x13, 0x1, 0x63, 0x6f, 0xa001, 0xc001, 0x8082, 0x73, 0x10200073, 0x9002)(random.nextInt(10))
           val s = Slot(pc, word, if (cycle % 13 < 6) 3 else 0)
           pc += (if ((word & 3) == 3) 4 else 2)
           Some(s)
@@ -433,6 +442,56 @@ class IntervalTraceDatapathSpec extends AnyFlatSpec with ChiselScalatestTester {
       input.foreach(driver.send)
       driver.stop()
       assert(decode(driver.beats.toSeq, 18) == reference(input, k, 7))
+    }
+  }
+
+  it should "end blocks at environment calls and label tag-leading instructions with the privilege they ran under" in {
+    // BOOM v3's trace: ecall, ebreak, c.ebreak and xRET retire tagged with the privilege
+    // they switch to and raise no trap flag; a fault does not retire and flags its cycle.
+    val (u, s, m) = (0, 1, 3)
+    val (ecall, ebreak, cEbreak, sret, mret) = (0x73, 0x100073, 0x9002, 0x10200073, 0x30200073)
+    val k = key(2, 3)
+    def cycle(slots: Option[Slot]*): Cycle = Cycle(slots.toSeq, Seq(BigInt(slots.flatten.size), 1, 7))
+    def at(pc: Int, priv: Int, insn: Int = 0x13): Option[Slot] = Some(Slot(pc, insn, priv))
+    val input = Seq(
+      cycle(at(0x1000, u), at(0x1004, u)),
+      cycle(at(0x1008, s, ecall)), // system call: U -> S
+      cycle(at(0x8000, s), at(0x8004, s)),
+      cycle(at(0x8008, m, ecall)), // SBI call: S -> M
+      cycle(at(0x9000, m), at(0x9004, s, mret)),
+      cycle(at(0x800c, u, sret), at(0x2000, s, ecall)), // restarted system call: sret, then ecall
+      cycle(at(0x8000, s)),
+      cycle(at(0x8004, u, sret)),
+      cycle(at(0x1010, m, ebreak)),
+      cycle(at(0x9000, m), at(0x9004, u, mret)),
+      cycle(at(0x1014, m, cEbreak)),
+      cycle(at(0x9004, u, mret)),
+      cycle(at(0x1016, u), at(0x101a, u)),
+      Cycle(Seq(None, None), Seq(0, 1, 7).map(BigInt(_)), trap = true), // a fault: nothing retires
+      cycle(at(0x9000, m), at(0x9004, u, mret)),
+      cycle(at(0x101e, u)))
+    // (start PC, end PC, privilege, partial start, partial end)
+    val expected = Vector(
+      (0x1000, 0x1008, u, true, false), (0x8000, 0x8008, s, false, false), (0x9000, 0x9004, m, false, false),
+      (0x800c, 0x800c, s, false, false), (0x2000, 0x2000, u, false, false), (0x8000, 0x8004, s, false, false),
+      (0x1010, 0x1010, u, false, false), (0x9000, 0x9004, m, false, false), (0x1014, 0x1014, u, false, false),
+      (0x9004, 0x9004, m, false, false), (0x1016, 0x101a, u, false, true), (0x9000, 0x9004, m, true, false),
+      (0x101e, 0x101e, u, false, true))
+    test(new IntervalTraceDatapath(k, incrementBits = Some(64))).withAnnotations(Seq(firrtl2.options.TargetDirAnnotation(
+      "generators/firechip/intervaltests/target/privilege"))) { dut =>
+      val driver = new Driver(dut, k, 61)
+      driver.start(1000)
+      input.foreach(driver.send)
+      driver.stop("rtl-privilege")
+      val records = decode(driver.beats.toSeq, 3)
+      assert(records == reference(input, k, 1000))
+      val blocks = records.filter(_.kind == bb).map { r =>
+        (r.words(0).toInt, r.words(1).toInt, (r.flags >> privilegeShift) & 7,
+          (r.flags & partialStart) != 0, (r.flags & partialEnd) != 0)
+      }
+      assert(blocks == expected)
+      assert(records.forall(r => r.kind != bb || (r.flags & (privilegeChange | discontinuity)) == 0))
+      assert(records.count(r => r.kind == bb && (r.flags & trap) != 0) == 1)
     }
   }
 
@@ -531,7 +590,7 @@ class IntervalTraceDatapathSpec extends AnyFlatSpec with ChiselScalatestTester {
       val slots = (0 until 4).map { lane =>
         if (random.nextInt(3) != 0) None else {
           if (cycle % 9 == 0 && lane == 2) pc += 0x100
-          val word = Vector(0x13, 0x1, 0x63, 0x6f, 0xa001, 0xc001, 0x8082, 0x10500073)(random.nextInt(8))
+          val word = Vector(0x13, 0x1, 0x63, 0x6f, 0xa001, 0xc001, 0x8082, 0x10500073, 0x73, 0x30200073, 0x100073)(random.nextInt(11))
           val s = Slot(pc, word, if (cycle % 13 < 6) 3 else 0)
           pc += (if ((word & 3) == 3) 4 else 2)
           Some(s)

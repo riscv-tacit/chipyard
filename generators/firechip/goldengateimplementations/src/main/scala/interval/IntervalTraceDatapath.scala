@@ -92,7 +92,11 @@ class IntervalBBState extends Bundle {
   // count + carried drift: subtract nominal length once per completed block.
   val progress = UInt(64.W)
   val snapshot_id = UInt(64.W)
+  // Privilege of the open block's instructions.
   val privilege = UInt(3.W)
+  // Trace privilege tag of the last retired instruction: the privilege that the
+  // next instruction runs under (see tagLeads).
+  val next_privilege = UInt(3.W)
   val have_privilege = Bool()
   val partial_start = Bool()
 }
@@ -139,6 +143,18 @@ class IntervalTraceDatapath(key: IntervalTraceBridgeKey, incrementBits: Option[I
     s.last_boundary_cycle := cycle
     stall.foreach(s.last_boundary_stall := _)
   }
+  def isTrapReturn(insn: UInt): Bool =
+    Seq("h00200073", "h10200073", "h30200073", "h7b200073").map(insn === _.U).reduce(_ || _)
+  // ecall, ebreak and c.ebreak. A core may retire these as ordinary instructions and
+  // then redirect to the trap vector without raising its trace's trap flags (BOOM v3
+  // executes them in its CSR unit), so they end a block like a jump.
+  def isEnvironmentCall(insn: UInt): Bool =
+    insn === "h00000073".U || insn === "h00100073".U || (insn(1, 0) =/= 3.U && insn(15, 0) === "h9002".U)
+  // Instructions that change privilege when they execute rather than when they trap:
+  // a core that samples its privilege CSR for the trace (BOOM v3) can tag them, and
+  // only them, with the privilege they switch to. Their own privilege is the one in
+  // effect before them.
+  def tagLeads(insn: UInt): Bool = isTrapReturn(insn) || isEnvironmentCall(insn)
   def endsBlock(insn: UInt): Bool = {
     val compressed = insn(1, 0) =/= 3.U
     val c_jump_branch = insn(1, 0) === 1.U &&
@@ -147,8 +163,8 @@ class IntervalTraceDatapath(key: IntervalTraceBridgeKey, incrementBits: Option[I
       insn(11, 7) =/= 0.U && insn(6, 2) === 0.U
     val branch = insn(6, 0) === "h63".U && insn(14, 12) =/= 2.U && insn(14, 12) =/= 3.U
     val jump = insn(6, 0) === "h6f".U || (insn(6, 0) === "h67".U && insn(14, 12) === 0.U)
-    val trap_return = Seq("h00200073", "h10200073", "h30200073", "h7b200073").map(insn === _.U).reduce(_ || _)
-    Mux(compressed, c_jump_branch || c_register_jump, branch || jump || trap_return)
+    Mux(compressed, c_jump_branch || c_register_jump, branch || jump || isTrapReturn(insn)) ||
+      isEnvironmentCall(insn)
   }
   def signExtend(pc: UInt): UInt = pc.asSInt.pad(64).asUInt
 
@@ -275,7 +291,12 @@ class IntervalTraceDatapath(key: IntervalTraceBridgeKey, incrementBits: Option[I
     val prior = prefix(i)
     val current = WireDefault(prior)
     val pc = signExtend(slot.iaddr)
-    val privilege_changed = prior.have_privilege && prior.privilege =/= slot.priv
+    // The instruction's own privilege: its tag, except for an instruction whose tag
+    // leads, which runs under the privilege left by the instruction before it.
+    val slot_privilege = Mux(prior.have_privilege && tagLeads(slot.insn), prior.next_privilege, slot.priv)
+    // An unexpected change: not the one a preceding xRET or environment call made. Within
+    // an open block next_privilege equals privilege, since those instructions end blocks.
+    val privilege_changed = prior.have_privilege && prior.next_privilege =/= slot_privilege
     val pc_changed = prior.instructions =/= 0.U && prior.next_pc =/= pc
     val split = slot.valid && prior.instructions =/= 0.U && (privilege_changed || pc_changed)
     when(split) {
@@ -289,7 +310,8 @@ class IntervalTraceDatapath(key: IntervalTraceBridgeKey, incrementBits: Option[I
     val retired_state = WireDefault(current)
     when(slot.valid) {
       when(current.instructions === 0.U) { retired_state.start_pc := pc }
-      retired_state.privilege := slot.priv
+      retired_state.privilege := slot_privilege
+      retired_state.next_privilege := slot.priv
       retired_state.have_privilege := true.B
       retired_state.partial_start := current.partial_start || privilege_changed
       retired_state.last_pc := pc

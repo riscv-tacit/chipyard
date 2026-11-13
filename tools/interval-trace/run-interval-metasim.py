@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Build a FireMarshal bare-metal image and run the interval bridge in local Verilator metasim.
 
-Workloads: smoke (a checksum loop) and wfi (three timer sleeps in WFI, which
-checks stall accounting against the program's own mcycle and minstret).
+Workloads: smoke (a checksum loop), wfi (three timer sleeps in WFI, which
+checks stall accounting against the program's own mcycle and minstret), l2 (L1/L2
+line traffic) and traps (M/S/U transitions through mret, sret, ecall, ebreak and a fault).
 """
 import argparse
 import csv
@@ -23,7 +24,8 @@ WORKLOADS = ROOT / 'software/firemarshal/example-workloads'
 # Workload: (FireMarshal JSON, ELF, PASS line prefix).
 WORKLOAD = {'smoke': ('interval-trace-smoke.json', 'smoke.elf', 'PASS interval-trace-smoke checksum=40832'),
             'wfi': ('interval-trace-wfi.json', 'wfi.elf', 'PASS interval-trace-wfi '),
-            'l2': ('interval-trace-l2.json', 'l2.elf', 'PASS interval-trace-l2 ')}
+            'l2': ('interval-trace-l2.json', 'l2.elf', 'PASS interval-trace-l2 '),
+            'traps': ('interval-trace-traps.json', 'traps.elf', 'PASS interval-trace-traps ')}
 RECIPES = ROOT / 'sims/firesim-staging/sample_config_build_recipes.yaml'
 
 

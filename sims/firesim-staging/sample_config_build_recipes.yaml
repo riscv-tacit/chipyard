@@ -620,6 +620,88 @@ firesim_mega_boom_v3_pmu_v2_interval_trace:
   metasim_customruntimeconfig: null
   bit_builder_recipe: bit-builder-recipes/f2.yaml
 
+# AWS F2 MegaBOOM interval trace with the third PMU event set (dispatch-slot top-down,
+# direction/JALR mispredicts, ROB flushes): the reference of the second cross-configuration round.
+firesim_mega_boom_v3_pmu_v3_interval_trace:
+  PLATFORM: f2
+  TARGET_PROJECT: firesim
+  TARGET_PROJECT_MAKEFRAG: ../../generators/firechip/chip/src/main/makefrag/firesim
+  DESIGN: FireSim
+  TARGET_CONFIG: FireSimMegaBoomV3WithPMUV3IntervalTraceConfig
+  PLATFORM_CONFIG: FRFCFS16GBQuadRank_BaseF2PCIMConfig
+  deploy_quintuplet: null
+  platform_config_args:
+    fpga_frequency: 50
+    build_strategy: RUNTIMEOPTIMIZED
+  post_build_hook: null
+  metasim_customruntimeconfig: null
+  bit_builder_recipe: bit-builder-recipes/f2.yaml
+
+# Second cross-configuration round, one change each from the PMU v3 reference: L2 128 KB.
+firesim_mega_boom_v3_pmu_v3_l2_128kb_interval_trace:
+  PLATFORM: f2
+  TARGET_PROJECT: firesim
+  TARGET_PROJECT_MAKEFRAG: ../../generators/firechip/chip/src/main/makefrag/firesim
+  DESIGN: FireSim
+  TARGET_CONFIG: FireSimMegaBoomV3PMUV3With128KBL2IntervalTraceConfig
+  PLATFORM_CONFIG: FRFCFS16GBQuadRank_BaseF2PCIMConfig
+  deploy_quintuplet: null
+  platform_config_args:
+    fpga_frequency: 50
+    build_strategy: RUNTIMEOPTIMIZED
+  post_build_hook: null
+  metasim_customruntimeconfig: null
+  bit_builder_recipe: bit-builder-recipes/f2.yaml
+
+# Second round: L1 data cache 8 KB, 2 ways.
+firesim_mega_boom_v3_pmu_v3_l1d_8kb_interval_trace:
+  PLATFORM: f2
+  TARGET_PROJECT: firesim
+  TARGET_PROJECT_MAKEFRAG: ../../generators/firechip/chip/src/main/makefrag/firesim
+  DESIGN: FireSim
+  TARGET_CONFIG: FireSimMegaBoomV3PMUV3With8KBL1DIntervalTraceConfig
+  PLATFORM_CONFIG: FRFCFS16GBQuadRank_BaseF2PCIMConfig
+  deploy_quintuplet: null
+  platform_config_args:
+    fpga_frequency: 50
+    build_strategy: RUNTIMEOPTIMIZED
+  post_build_hook: null
+  metasim_customruntimeconfig: null
+  bit_builder_recipe: bit-builder-recipes/f2.yaml
+
+# Second round: L1 instruction cache 8 KB, 2 ways; 40 MHz, as the first round's 8 KB L1I build
+# needed (the FPGA clock does not change target-cycle results).
+firesim_mega_boom_v3_pmu_v3_l1i_8kb_interval_trace_40mhz:
+  PLATFORM: f2
+  TARGET_PROJECT: firesim
+  TARGET_PROJECT_MAKEFRAG: ../../generators/firechip/chip/src/main/makefrag/firesim
+  DESIGN: FireSim
+  TARGET_CONFIG: FireSimMegaBoomV3PMUV3With8KBL1IIntervalTraceConfig
+  PLATFORM_CONFIG: FRFCFS16GBQuadRank_BaseF2PCIMConfig
+  deploy_quintuplet: null
+  platform_config_args:
+    fpga_frequency: 40
+    build_strategy: RUNTIMEOPTIMIZED
+  post_build_hook: null
+  metasim_customruntimeconfig: null
+  bit_builder_recipe: bit-builder-recipes/f2.yaml
+
+# Second round: gshare conditional-direction predictor instead of TAGE-L.
+firesim_mega_boom_v3_pmu_v3_gshare_interval_trace:
+  PLATFORM: f2
+  TARGET_PROJECT: firesim
+  TARGET_PROJECT_MAKEFRAG: ../../generators/firechip/chip/src/main/makefrag/firesim
+  DESIGN: FireSim
+  TARGET_CONFIG: FireSimMegaBoomV3PMUV3WithGshareIntervalTraceConfig
+  PLATFORM_CONFIG: FRFCFS16GBQuadRank_BaseF2PCIMConfig
+  deploy_quintuplet: null
+  platform_config_args:
+    fpga_frequency: 50
+    build_strategy: RUNTIMEOPTIMIZED
+  post_build_hook: null
+  metasim_customruntimeconfig: null
+  bit_builder_recipe: bit-builder-recipes/f2.yaml
+
 # Instruction-marker capture for Linux/SPEC workloads.
 firesim_mega_boom_v3_interval_trace_trigger:
   PLATFORM: f2

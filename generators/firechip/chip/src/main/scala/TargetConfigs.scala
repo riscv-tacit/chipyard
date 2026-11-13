@@ -290,6 +290,105 @@ class FireSimMegaBoomV3IntervalTraceConfig extends Config(
 class FireSimMegaBoomV3WithPMUV2IntervalTraceConfig extends Config(
   new FireSimMegaBoomV3IntervalTraceConfig)
 
+// The same design as FireSimMegaBoomV3IntervalTraceConfig, under a name that marks the
+// third PMU event set: v2 plus the dispatch-slot top-down events
+// (pipeline.frontend_bubble_slots, rob.retired_uops), the direction/JALR split of
+// branch mispredict redirects and rob.flushes. Bitstreams built before these events used
+// FireSimMegaBoomV3WithPMUV2IntervalTraceConfig.
+class FireSimMegaBoomV3WithPMUV3IntervalTraceConfig extends Config(
+  new FireSimMegaBoomV3IntervalTraceConfig)
+
+//*****************************************************************
+// Cross-configuration study: MegaBOOM v3 with one change each.
+// Everything else (bridges, clocks, memory model) matches
+// FireSimMegaBoomV3IntervalTraceConfig, so a change in behaviour has one cause.
+//*****************************************************************
+
+// BOOM v3 L1 instruction cache with `nWays` ways (sets unchanged, so the
+// index stays within a page).
+class WithBoomV3ICacheWays(nWays: Int) extends Config((site, here, up) => {
+  case TilesLocated(InSubsystem) => up(TilesLocated(InSubsystem), site) map {
+    case tp: boom.v3.common.BoomTileAttachParams => tp.copy(tileParams = tp.tileParams.copy(
+      icache = tp.tileParams.icache.map(_.copy(nWays = nWays))))
+    case other => other
+  }
+})
+
+// BOOM v3 L1 data cache with `nWays` ways (sets, MSHRs and TLB unchanged).
+class WithBoomV3DCacheWays(nWays: Int) extends Config((site, here, up) => {
+  case TilesLocated(InSubsystem) => up(TilesLocated(InSubsystem), site) map {
+    case tp: boom.v3.common.BoomTileAttachParams => tp.copy(tileParams = tp.tileParams.copy(
+      dcache = tp.tileParams.dcache.map(_.copy(nWays = nWays))))
+    case other => other
+  }
+})
+
+// BOOM v3 TAGE-L predictor with TAGE and the loop predictor replaced by a
+// one-table gshare (the predictor of WithBoom2BPD). The micro-BTB, BTB and
+// bimodal stages are kept, so only conditional-direction prediction changes.
+class WithBoomV3GshareBPD extends Config((site, here, up) => {
+  case TilesLocated(InSubsystem) => up(TilesLocated(InSubsystem), site) map {
+    case tp: boom.v3.common.BoomTileAttachParams => tp.copy(tileParams = tp.tileParams.copy(core = tp.tileParams.core.copy(
+      globalHistoryLength = 16,
+      branchPredictor = ((resp_in: boom.v3.ifu.BranchPredictionBankResponse, p: org.chipsalliance.cde.config.Parameters) => {
+        val gshare = Module(new boom.v3.ifu.TageBranchPredictorBank(
+          boom.v3.ifu.BoomTageParams(tableInfo = Seq((256, 16, 7))))(p))
+        val btb = Module(new boom.v3.ifu.BTBBranchPredictorBank()(p))
+        val bim = Module(new boom.v3.ifu.BIMBranchPredictorBank()(p))
+        val ubtb = Module(new boom.v3.ifu.FAMicroBTBBranchPredictorBank()(p))
+        val preds = Seq(gshare, btb, ubtb, bim)
+        preds.map(_.io := DontCare)
+
+        ubtb.io.resp_in(0)   := resp_in
+        bim.io.resp_in(0)    := ubtb.io.resp
+        btb.io.resp_in(0)    := bim.io.resp
+        gshare.io.resp_in(0) := btb.io.resp
+
+        (preds, gshare.io.resp)
+      })
+    )))
+    case other => other
+  }
+})
+
+// L2: 128 KB, 8 ways (reference: 512 KB, 8 ways). WithInclusiveCache replaces the
+// coherence manager, so the L2 PMU events are reapplied above it.
+class FireSimMegaBoomV3With128KBL2IntervalTraceConfig extends Config(
+  new chipyard.config.WithInclusiveCachePMUEvents ++
+  new freechips.rocketchip.subsystem.WithInclusiveCache(capacityKB = 128) ++
+  new FireSimMegaBoomV3IntervalTraceConfig)
+
+// L1 instruction cache: 8 KB, 2 ways (reference: 32 KB, 8 ways).
+class FireSimMegaBoomV3With8KBL1IIntervalTraceConfig extends Config(
+  new WithBoomV3ICacheWays(2) ++
+  new FireSimMegaBoomV3IntervalTraceConfig)
+
+// Conditional-branch direction predictor: gshare (reference: TAGE-L).
+class FireSimMegaBoomV3WithGshareIntervalTraceConfig extends Config(
+  new WithBoomV3GshareBPD ++
+  new FireSimMegaBoomV3IntervalTraceConfig)
+
+// Cross-configuration study, second round: the same one-change variants on the PMU v3
+// event set, under their own names so their build outputs do not replace the first
+// round's (FireSim keys build outputs by target configuration name).
+class FireSimMegaBoomV3PMUV3With128KBL2IntervalTraceConfig extends Config(
+  new chipyard.config.WithInclusiveCachePMUEvents ++
+  new freechips.rocketchip.subsystem.WithInclusiveCache(capacityKB = 128) ++
+  new FireSimMegaBoomV3WithPMUV3IntervalTraceConfig)
+
+// L1 data cache: 8 KB, 2 ways (reference: 32 KB, 8 ways).
+class FireSimMegaBoomV3PMUV3With8KBL1DIntervalTraceConfig extends Config(
+  new WithBoomV3DCacheWays(2) ++
+  new FireSimMegaBoomV3WithPMUV3IntervalTraceConfig)
+
+class FireSimMegaBoomV3PMUV3With8KBL1IIntervalTraceConfig extends Config(
+  new WithBoomV3ICacheWays(2) ++
+  new FireSimMegaBoomV3WithPMUV3IntervalTraceConfig)
+
+class FireSimMegaBoomV3PMUV3WithGshareIntervalTraceConfig extends Config(
+  new WithBoomV3GshareBPD ++
+  new FireSimMegaBoomV3WithPMUV3IntervalTraceConfig)
+
 class FireSimLargeBoomConfig extends Config(
   new WithDefaultFireSimBridges ++
   new WithFireSimConfigTweaks ++

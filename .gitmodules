@@ -166,3 +166,6 @@
 [submodule "generators/radiance"]
 	path = generators/radiance
 	url = https://github.com/ucb-bar/radiance.git
+[submodule "software/simpoint"]
+	path = software/simpoint
+	url = https://github.com/shinezyy/SimPoint.3.2-fix.git

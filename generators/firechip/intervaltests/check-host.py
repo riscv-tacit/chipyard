@@ -220,7 +220,23 @@ def check_intervals(output, binary, stall=None):
         assert sum(not f['final'] for f in intervals if f['epoch'] == e) == nominal.get(e, 0)
     assert set(definitions.values()) == identities
     check_wall_intervals(output, binary, reference, intervals, stall)
+    check_no_block_intervals(output, definitions, intervals)
     return definitions, intervals
+
+
+def check_no_block_intervals(output, definitions, intervals):
+    """+interval-trace-no-blocks: interval JSONL version 4, the intervals of the default output without their
+    blocks and with the sums over their user-mode blocks (privilege 0); no block catalog."""
+    assert not (Path(output) / 'no-blocks-7-blocks.csv').exists()
+    lines = (Path(output) / 'no-blocks-7-intervals.jsonl').read_text().splitlines()
+    assert len(lines) == len(intervals)
+    for line, f in zip(lines, intervals):
+        record = json.loads(line)
+        user = [block for block in f['blocks'] if definitions[block[0]][2] == 0]
+        expected = {key: value for key, value in f.items() if key != 'blocks'}
+        expected.update(interval_format_version=4, user_instructions=sum(block[1] for block in user),
+                        user_cycles=sum(block[2] for block in user))
+        assert record == expected, (record, expected)
 
 
 def check_wall_intervals(output, binary, reference, busy, stall):
@@ -305,8 +321,8 @@ for count, base, stall in cases:
             assert [(f['start_cycle'], f['end_cycle'], f['cycles'], f['attributed_cycles'], f['unattributed_cycles'])
                     for f in wall] == [(0, 20, 20, 20, 0), (20, 30, 10, 6, 4)]
             assert [b[2] for b in wall[0]['blocks']] == [9, 6, 5] and wall[1]['blocks'][0][2] == 6
-        print(f'PASS: interval JSONL versions 3 and 2 (wall cycles) agree across output modes and with the raw packets '
-              f'({count} counters, stall event {stall})')
+        print(f'PASS: interval JSONL versions 3, 2 (wall cycles) and 4 (no blocks) agree across output modes and with '
+              f'the raw packets ({count} counters, stall event {stall})')
 
 # The same PC range with a different privilege or partial flag is a different block.
 aliasing = write_stream('aggregate-identities', [
@@ -318,6 +334,9 @@ with tempfile.TemporaryDirectory(prefix="driver-", dir=OUT) as output:
     run([str(driver_exe), output, str(aliasing.with_suffix(".bin")), "2", "99"])
     definitions, _ = check_intervals(output, aliasing.with_suffix(".bin").read_bytes())
     assert len(definitions) == 3
+    # One of the four blocks ran in user mode: one instruction, one cycle.
+    no_blocks = [json.loads(line) for line in (Path(output) / 'no-blocks-7-intervals.jsonl').read_text().splitlines()]
+    assert [(f['user_instructions'], f['user_cycles'], f['instructions']) for f in no_blocks] == [(1, 1, 4), (0, 0, 0)]
 print('PASS: block identities include privilege and partial flags')
 
 # The stream decoder rejects invalid streams: a missing epoch end, a dropped

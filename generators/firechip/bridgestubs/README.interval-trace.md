@@ -329,6 +329,10 @@ and aggregates each interval directly. Its default outputs are:
   and IPC. IDs remain stable across intervals and epochs in the same capture.
   See [Interval JSONL format](#interval-jsonl-format).
 
+With `+interval-trace-no-blocks` the driver writes no block catalog, and the
+interval records are `interval_format_version: 4`: no block entries, plus the
+instructions and cycles of the interval's user-mode blocks.
+
 New definitions are appended and flushed before their referencing interval is
 written and flushed. The driver retains an identity-to-ID lookup plus the current
 interval's block measurements; the catalog is not deferred until completion.
@@ -359,6 +363,23 @@ With `+interval-trace-wall-cycles` the driver writes version 2 records instead:
 every cycle field counts elapsed (wall) cycles, stall cycles included, and
 `tile.cycles`' delta equals `cycles`. The driver checks the stall words the same
 way in both modes. Every record of a capture has the same version.
+
+#### Version 4
+
+With `+interval-trace-no-blocks` the driver writes version 4 records: the fields
+and cycle basis of version 3 without `blocks`, plus two fields after `bb_flags`:
+
+| Field | Meaning |
+|---|---|
+| `user_instructions` | Instructions of the interval's user-mode BBs (privilege `0`). |
+| `user_cycles` | Cycles of the same BBs, on the cycle basis of version 3. |
+
+They are the sums a reader of a version 3 capture gets from the block entries
+whose catalog privilege is `0`. No `intervaltrace-0-blocks.csv` is written, and
+one left under the same prefix by an earlier run is removed. The option cannot be
+combined with `+interval-trace-wall-cycles`. A capture of a long run is then a
+few hundred bytes per interval, for uses that need each interval's totals and
+PMU deltas and not its code.
 
 #### Version 2
 
@@ -450,6 +471,9 @@ Options:
 - `+interval-trace-wall-cycles`: interval cycle fields include stall cycles
   (interval JSONL version 2). By default they exclude the catalog's stall event
   (version 3); without a stall event the two agree.
+- `+interval-trace-no-blocks`: write interval records without block entries and no
+  block catalog (interval JSONL version 4, with `user_instructions` and
+  `user_cycles`).
 - `+interval-trace-interval=N`: positive 64-bit nominal instruction length.
 - `+interval-trace-trigger`: shorthand for the FireMarshal instruction trigger.
 - `+interval-trace-select=0|1|2|3`: select always-on, cycle, PC, or instruction triggering.

@@ -31,6 +31,7 @@ DEPLOY = ROOT / 'sims/firesim/deploy'
 RECIPES = ROOT / 'sims/firesim-staging/sample_config_build_recipes.yaml'
 CHECKER = ROOT / 'tools/interval-trace/check-compact-capture.py'
 OUTPUTS = ['uartlog', 'intervaltrace-0.json', 'intervaltrace-0-blocks.csv', 'intervaltrace-0-intervals.jsonl']
+NO_BLOCKS = '+interval-trace-no-blocks'      # the driver then writes no block entries and no block catalog
 
 RUNTIME = """\
 run_farm:
@@ -64,7 +65,7 @@ target_config:
   net_bandwidth: 200
   profile_interval: -1
   default_hw_config: {hw_config}
-  plusarg_passthrough: +interval-trace-trigger +interval-trace-interval={interval} +interval-trace-file=intervaltrace
+  plusarg_passthrough: +interval-trace-trigger +interval-trace-interval={interval} +interval-trace-file=intervaltrace{options}
 tracing:
   enable: false
   output_format: 0
@@ -149,15 +150,18 @@ def prepare(args):
     workload = DEPLOY / 'workloads' / f'{session}.json'
     # FireSim resolves each job's ../ image paths from workloads/<benchmark_name>/.
     (DEPLOY / 'workloads' / session).mkdir()
-    workload.write_text(json.dumps(dict(benchmark_name=session, common_simulation_outputs=OUTPUTS, workloads=jobs),
+    outputs = [name for name in OUTPUTS if not (args.no_blocks and name.endswith('-blocks.csv'))]
+    workload.write_text(json.dumps(dict(benchmark_name=session, common_simulation_outputs=outputs, workloads=jobs),
                                    indent=2) + '\n')
     (run / 'runtime.yaml').write_text(RUNTIME.format(session=session, nodes=len(jobs), hw_config=args.hw_config,
-                                                     interval=args.interval))
+                                                     interval=args.interval,
+                                                     options=f' {NO_BLOCKS}' if args.no_blocks else ''))
     (run / 'hwdb.yaml').write_text(f'{args.hw_config}:\n    agfi: {args.agfi}\n    deploy_quintuplet_override: null\n'
                                    '    custom_runtime_config: null\n')
     (run / 'items.json').write_text(json.dumps(dict(
         images=str(args.images.resolve()), kit=index['kit'], label=index['label'], size=index['size'],
-        hw_config=args.hw_config, agfi=args.agfi, interval=args.interval, timeout=args.timeout,
+        hw_config=args.hw_config, agfi=args.agfi, interval=args.interval, no_blocks=args.no_blocks,
+        timeout=args.timeout,
         min_free_gb=args.min_free_gb, workload=str(workload), items=items), indent=2) + '\n')
     launch = run / 'launch.sh'
     launch.write_text(LAUNCH.format(root=ROOT, keypair=args.keypair, ssh_key=args.ssh_key, python=sys.executable,
@@ -277,6 +281,8 @@ def main():
     p.add_argument('--hw-config', required=True, help='hwdb entry name, for example firesim_mega_boom_v3_pmu_v2_interval_trace')
     p.add_argument('--agfi', required=True)
     p.add_argument('--interval', type=int, default=1000000, help='nominal interval length, instructions')
+    p.add_argument('--no-blocks', action='store_true',
+                   help='capture intervals without block entries (interval JSONL version 4, no block catalog)')
     p.add_argument('--timeout', required=True, help='runworkload wall-clock limit, timeout(1) syntax, for example 10h')
     p.add_argument('--min-free-gb', type=int, required=True, help='local free space required before launching')
     p.add_argument('--keypair', required=True, help='FIRESIM_KEYPAIR')

@@ -120,12 +120,14 @@ int main(int argc, char **argv) {
     return std::vector<std::string>{"+interval-trace-file=" + (out / name).string(),
                                    "+interval-trace-interval=4294967298"};
   };
-  for (const std::string name : {"default", "raw-only", "normal", "raw", "wall"}) {
+  for (const std::string name : {"default", "raw-only", "normal", "raw", "wall", "no-blocks"}) {
     const bool raw = name == "raw" || name == "raw-only";
     const bool csv = name == "normal" || name == "raw";
     const bool wall = name == "wall";
+    const bool no_blocks = name == "no-blocks";
     auto options = args(name.c_str());
     if (wall) options.push_back("+interval-trace-wall-cycles");
+    if (no_blocks) options.push_back("+interval-trace-no-blocks");
     if (raw) options.push_back("+interval-trace-raw");
     if (csv) options.push_back("+interval-trace-csv");
     if (raw) options.push_back("+interval-trace-trigger");
@@ -135,20 +137,28 @@ int main(int argc, char **argv) {
     Diagnostics messages;
     // Reusing a prefix must not leave an old successful output on failure.
     { std::ofstream previous(out / (name + "-7-intervals.jsonl")); previous << "old"; }
+    // Without blocks there is no catalog; one from a previous run must not survive either.
+    if (no_blocks) { std::ofstream previous(out / (name + "-7-blocks.csv")); previous << "old"; }
     driver.init();
     assert(!std::filesystem::exists(out / (name + "-7-intervals.jsonl")));
+    assert(std::filesystem::exists(out / (name + "-7-blocks.csv")) == !no_blocks);
     const std::vector<std::pair<size_t, uint32_t>> expected{{8, 2}, {12, 1}, {28, raw ? 3u : 0u},
       {32, raw ? 0x8013u : 0u}, {36, raw ? UINT32_MAX : 0u},
       {40, raw ? 0x10013u : UINT32_MAX}, {44, UINT32_MAX}, {4, 1}, {0, 1}};
     assert(sim.writes == expected);
     while (stream.input().position < bytes.size() - 64) driver.tick();
     // Both outputs must already be readable while the driver is alive and before finish().
-    const auto live_catalog = read_file(out / (name + "-7-blocks.csv"));
+    if (!no_blocks) {
+      const auto live_catalog = read_file(out / (name + "-7-blocks.csv"));
+      assert(std::count(live_catalog.begin(), live_catalog.end(), '\n') > 1);
+    }
     const auto live_intervals = read_file(out / (name + "-7-intervals.jsonl.partial"));
-    assert(std::count(live_catalog.begin(), live_catalog.end(), '\n') > 1);
     assert(!live_intervals.empty() && live_intervals.back() == '\n');
     const std::string live_text(live_intervals.begin(), live_intervals.end());
-    assert(live_text.find(wall ? "\"interval_format_version\":2" : "\"interval_format_version\":3") != std::string::npos);
+    assert(live_text.find(no_blocks ? "\"interval_format_version\":4" : wall ? "\"interval_format_version\":2"
+                                    : "\"interval_format_version\":3") != std::string::npos);
+    assert((live_text.find("\"blocks\":") == std::string::npos) == no_blocks);
+    assert((live_text.find("\"user_instructions\":") != std::string::npos) == no_blocks);
     driver.finish();
     assert(!driver.terminate() && driver.exit_code() == 0);
     assert(stream.input().flushed && stream.input().position == bytes.size());
@@ -159,6 +169,7 @@ int main(int argc, char **argv) {
       else assert(!std::filesystem::exists(out / (name + "-7" + suffix)));
     assert(!read_file(out / (name + "-7-intervals.jsonl")).empty());
     assert(!std::filesystem::exists(out / (name + "-7-intervals.jsonl.partial")));
+    assert(std::filesystem::exists(out / (name + "-7-blocks.csv")) == !no_blocks);
     const auto json = read_file(out / (name + "-7.json"));
     assert(std::string(json.begin(), json.end()) == manifest);
     const auto summary = messages.text();
@@ -253,7 +264,8 @@ int main(int argc, char **argv) {
     {"+interval-trace-select=1", "+interval-trace-start=18446744073709551616"},
     {"+interval-trace-select=3", "+interval-trace-start=0x"},
     {"+interval-trace-select=3", "+interval-trace-end="},
-    {"+interval-trace-select=1", "+interval-trace-start=0x10"}};
+    {"+interval-trace-select=1", "+interval-trace-start=0x10"},
+    {"+interval-trace-no-blocks", "+interval-trace-wall-cycles"}};
   for (const auto &extra : invalid_options) {
     MockSim sim;
     MockEngine stream({}, sim);
@@ -286,5 +298,5 @@ int main(int argc, char **argv) {
     rejects([&] { driver.finish(); });
     assert(driver.exit_code() == 1 && messages.text().find("error:") != std::string::npos);
   }
-  std::cout << "PASS: driver MMIO, default interval aggregation, optional CSV/raw dumps, stop/flush, diagnostics, disabled capture and fatal failures\n";
+  std::cout << "PASS: driver MMIO, default interval aggregation, intervals without blocks, optional CSV/raw dumps, stop/flush, diagnostics, disabled capture and fatal failures\n";
 }

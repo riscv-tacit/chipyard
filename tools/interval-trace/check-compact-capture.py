@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""Validate an interval capture in JSONL version 2 or 3 and its workload results.
+"""Validate an interval capture in JSONL version 2, 3 or 4 and its workload results.
 
 Version 3 equals version 2, except that with a stall event in the catalog every
 cycle field excludes stall cycles; tile.cycles' delta is then cycles plus the
 stall event's delta. The driver writes version 2 (wall cycles, stall included)
-when run with +interval-trace-wall-cycles.
+when run with +interval-trace-wall-cycles, and version 4 with
++interval-trace-no-blocks: the fields and cycle basis of version 3 without the
+block entries, plus the instructions and cycles of the user-mode blocks, and no
+block catalog.
 """
 import argparse
 import csv
@@ -17,30 +20,39 @@ import subprocess
 
 
 def check_capture(prefix, interval):
-    """Validate one capture's catalog, block definitions and intervals (version 2 or 3).
+    """Validate one capture's catalog, block definitions and intervals (version 2, 3 or 4).
 
     Returns (names, definitions, epochs, totals). Requires a reset-free capture
-    whose intervals all have the given nominal length.
+    whose intervals all have the given nominal length. A version 4 capture has no
+    block definitions, and its totals have no bb_records.
     """
     assert not Path(str(prefix) + '-intervals.jsonl.partial').exists(), 'incomplete capture'
     catalog = json.loads(prefix.with_suffix('.json').read_text())
     names = [event['name'] for event in catalog['events']]
     stall = catalog.get('stall_event')
     assert stall is None or stall in names, 'stall event outside the catalog'
-    with Path(str(prefix) + '-blocks.csv').open() as stream:
-        rows = csv.DictReader(stream)
-        assert rows.fieldnames == ['id', 'start_pc', 'end_pc', 'privilege', 'partial_start', 'partial_end']
-        definitions = {}
-        for row in rows:
-            index = int(row['id'])
-            assert index == len(definitions) + 1
-            key = (int(row['start_pc'], 16), int(row['end_pc'], 16), int(row['privilege']),
-                   int(row['partial_start']), int(row['partial_end']))
-            assert 0 <= key[0] <= key[1] < 2**64 and key[2] in (0, 1, 3)
-            assert key[3] in (0, 1) and key[4] in (0, 1)
-            definitions[index] = key
+    with Path(str(prefix) + '-intervals.jsonl').open() as stream:
+        no_blocks = json.loads(stream.readline())['interval_format_version'] == 4
+    definitions = {}
+    if no_blocks:
+        assert not Path(str(prefix) + '-blocks.csv').exists(), 'block catalog beside a capture without blocks'
+    else:
+        with Path(str(prefix) + '-blocks.csv').open() as stream:
+            rows = csv.DictReader(stream)
+            assert rows.fieldnames == ['id', 'start_pc', 'end_pc', 'privilege', 'partial_start', 'partial_end']
+            for row in rows:
+                index = int(row['id'])
+                assert index == len(definitions) + 1
+                key = (int(row['start_pc'], 16), int(row['end_pc'], 16), int(row['privilege']),
+                       int(row['partial_start']), int(row['partial_end']))
+                assert 0 <= key[0] <= key[1] < 2**64 and key[2] in (0, 1, 3)
+                assert key[3] in (0, 1) and key[4] in (0, 1)
+                definitions[index] = key
     assert len(set(definitions.values())) == len(definitions), 'duplicate block identities'
     totals = dict(intervals=0, nominal_intervals=0, instructions=0, cycles=0, stall_cycles=0, bb_records=0)
+    if no_blocks:
+        del totals['bb_records']
+        totals.update(user_instructions=0, user_cycles=0)
     version = None
     previous = None
     epochs = {}
@@ -48,7 +60,7 @@ def check_capture(prefix, interval):
     with Path(str(prefix) + '-intervals.jsonl').open() as stream:
         for line in stream:
             f = json.loads(line)
-            assert f['interval_format_version'] in (2, 3) and f['nominal_interval'] == interval
+            assert f['interval_format_version'] in (2, 3, 4) and f['nominal_interval'] == interval
             assert version in (None, f['interval_format_version']), 'mixed interval format versions'
             version = f['interval_format_version']
             stalled = f['counter_deltas'][names.index(stall)] if stall is not None else 0
@@ -76,20 +88,27 @@ def check_capture(prefix, interval):
             else:
                 assert f['ipc'] is None
             assert f['counter_deltas'][names.index('rob.instructions_retired')] == f['physical_retirements']
-            excluded = stalled if version == 3 else 0
+            excluded = stalled if version in (3, 4) else 0
             assert f['counter_deltas'][names.index('tile.cycles')] - excluded == f['cycles']
-            ids = set()
-            instructions = cycles = executions = 0
-            for block in f['blocks']:
-                assert len(block) == 4 and all(type(x) is int and 0 <= x < 2**64 for x in block)
-                index, insns, elapsed, count = block
-                assert index in definitions and index not in ids and insns > 0 and count > 0
-                ids.add(index)
-                instructions += insns; cycles += elapsed; executions += count
-            referenced.update(ids)
-            assert instructions == f['instructions'] and cycles == f['attributed_cycles']
+            if no_blocks:
+                assert 'blocks' not in f
+                assert 0 <= f['user_instructions'] <= f['instructions']
+                assert 0 <= f['user_cycles'] <= f['attributed_cycles']
+                totals['user_instructions'] += f['user_instructions']; totals['user_cycles'] += f['user_cycles']
+            else:
+                ids = set()
+                instructions = cycles = executions = 0
+                for block in f['blocks']:
+                    assert len(block) == 4 and all(type(x) is int and 0 <= x < 2**64 for x in block)
+                    index, insns, elapsed, count = block
+                    assert index in definitions and index not in ids and insns > 0 and count > 0
+                    ids.add(index)
+                    instructions += insns; cycles += elapsed; executions += count
+                referenced.update(ids)
+                assert instructions == f['instructions'] and cycles == f['attributed_cycles']
+                totals['bb_records'] += executions
             totals['intervals'] += 1; totals['nominal_intervals'] += not f['final']
-            totals['instructions'] += instructions; totals['cycles'] += f['cycles']; totals['bb_records'] += executions
+            totals['instructions'] += f['instructions']; totals['cycles'] += f['cycles']
             totals['stall_cycles'] += stalled
             for name in ('instructions', 'cycles'):
                 epochs[f['epoch']][name] += f[name]
@@ -111,12 +130,13 @@ def check(job, interval, smoke=False, expected_pass=None):
     summaries = re.findall(r'IntervalTrace intervaltrace-0: epochs=(\d+), intervals=(\d+), BBs=(\d+) .*?resets=(\d+), '
                            r'instructions=(\d+), cycles=(\d+), stream_bytes=\d+(?:, stall_cycles=(\d+))?', uart)
     assert len(summaries) == 1, 'missing or ambiguous driver summary'
-    # The driver summary reports elapsed cycles; version 3 interval cycles exclude stall cycles,
-    # version 2 (+interval-trace-wall-cycles) include them.
+    # The driver summary reports elapsed cycles; version 3 and 4 interval cycles exclude stall cycles,
+    # version 2 (+interval-trace-wall-cycles) include them. A version 4 capture has no block entries to
+    # count the summary's BB records from.
     summary = tuple(int(x or 0) for x in summaries[0])
-    excluded = totals['stall_cycles'] if totals['interval_format_version'] == 3 else 0
-    assert summary == (len(epochs), totals['nominal_intervals'], totals['bb_records'], 0, totals['instructions'],
-                       totals['cycles'] + excluded, totals['stall_cycles'])
+    excluded = totals['stall_cycles'] if totals['interval_format_version'] in (3, 4) else 0
+    assert summary == (len(epochs), totals['nominal_intervals'], totals.get('bb_records', summary[2]), 0,
+                       totals['instructions'], totals['cycles'] + excluded, totals['stall_cycles'])
     comparisons = 0
     if smoke:
         assert 'PASS interval-trace-smoke checksum=40832' in uart and 'FAIL interval-trace-smoke' not in uart

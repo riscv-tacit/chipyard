@@ -30,10 +30,11 @@ intervaltrace_t::intervaltrace_t(simif_t &sim, StreamEngine &stream,
     : streaming_bridge_driver_t(sim, stream, &KIND), addrs(addrs),
       stream_idx(stream_idx), stream_depth(stream_depth), stall_counter(stall_counter),
       wall_cycles(std::find(args.begin(), args.end(), "+interval-trace-wall-cycles") != args.end()),
+      no_blocks(std::find(args.begin(), args.end(), "+interval-trace-no-blocks") != args.end()),
       // The decoder always checks the stall words; only the aggregates choose the cycle basis.
       aggregate([this](const intervaltrace_features &features) {
         write_features(features);
-      }, wall_cycles ? -1 : stall_counter),
+      }, wall_cycles ? -1 : stall_counter, !no_blocks),
       decoder(counters, catalog_id, stall_counter, [this](unsigned kind, unsigned flags, uint64_t epoch,
                                          const std::vector<uint64_t> &words) {
         aggregate.consume(kind, flags, epoch, words);
@@ -58,8 +59,8 @@ intervaltrace_t::intervaltrace_t(simif_t &sim, StreamEngine &stream,
       dump_csv = true;
     else if (arg == "+interval-trace-raw")
       dump_raw = true;
-    else if (arg == "+interval-trace-wall-cycles")
-      ; // read by the initializer of wall_cycles
+    else if (arg == "+interval-trace-wall-cycles" || arg == "+interval-trace-no-blocks")
+      ; // read by the initializers of wall_cycles and no_blocks
     else if (arg.compare(0, select_arg.size(), select_arg) == 0) {
       const auto selector = trigger_number(arg.substr(select_arg.size()), 10);
       if (selector > 3) throw std::runtime_error("interval-trace-select must be 0, 1, 2, or 3");
@@ -82,6 +83,8 @@ intervaltrace_t::intervaltrace_t(simif_t &sim, StreamEngine &stream,
         throw std::runtime_error("interval-trace-interval must be nonzero");
     }
   }
+  if (no_blocks && wall_cycles)
+    throw std::runtime_error("interval-trace-no-blocks cannot be combined with interval-trace-wall-cycles");
   if (marker_alias) {
     if (have_selector && trigger_selector != 3)
       throw std::runtime_error("interval-trace-trigger requires selector 3");
@@ -128,10 +131,16 @@ void intervaltrace_t::init() {
     if (std::remove((prefix + "-intervals.jsonl").c_str()) != 0 && errno != ENOENT)
       throw std::runtime_error("cannot replace interval trace aggregates");
     interval_output = open_output("-intervals.jsonl.partial");
-    block_catalog_output = open_output("-blocks.csv");
-    if (std::fputs("id,start_pc,end_pc,privilege,partial_start,partial_end\n", block_catalog_output) < 0 ||
-        std::fflush(block_catalog_output) != 0)
-      throw std::runtime_error("cannot write interval trace block catalog header");
+    if (no_blocks) {
+      // No catalog in this mode; one left by a previous run would not belong to these intervals.
+      if (std::remove((prefix + "-blocks.csv").c_str()) != 0 && errno != ENOENT)
+        throw std::runtime_error("cannot remove a previous interval trace block catalog");
+    } else {
+      block_catalog_output = open_output("-blocks.csv");
+      if (std::fputs("id,start_pc,end_pc,privilege,partial_start,partial_end\n", block_catalog_output) < 0 ||
+          std::fflush(block_catalog_output) != 0)
+        throw std::runtime_error("cannot write interval trace block catalog header");
+    }
     if (dump_raw) raw_output = open_output(".bin");
     if (dump_csv) {
       bb_output = open_output("-bb.csv");
@@ -186,21 +195,23 @@ size_t intervaltrace_t::drain(size_t minimum_bytes) {
 }
 
 void intervaltrace_t::write_features(const intervaltrace_features &features) {
-  for (const auto &entry : features.blocks) {
-    const auto &key = entry.first;
-    const auto inserted = block_ids.try_emplace(key, block_ids.size() + 1);
-    if (inserted.second &&
-        std::fprintf(block_catalog_output, "%" PRIu64 ",0x%" PRIx64 ",0x%" PRIx64 ",%u,%u,%u\n",
-                     inserted.first->second, key.start_pc, key.end_pc, key.privilege,
-                     !!(key.partial_flags & 2), !!(key.partial_flags & 4)) < 0)
-      throw std::runtime_error("cannot write interval trace block definition");
+  if (!no_blocks) {
+    for (const auto &entry : features.blocks) {
+      const auto &key = entry.first;
+      const auto inserted = block_ids.try_emplace(key, block_ids.size() + 1);
+      if (inserted.second &&
+          std::fprintf(block_catalog_output, "%" PRIu64 ",0x%" PRIx64 ",0x%" PRIx64 ",%u,%u,%u\n",
+                       inserted.first->second, key.start_pc, key.end_pc, key.privilege,
+                       !!(key.partial_flags & 2), !!(key.partial_flags & 4)) < 0)
+        throw std::runtime_error("cannot write interval trace block definition");
+    }
+    // Definitions must leave the userspace buffer before records reference them.
+    // This is incremental process-crash protection, not power-loss durability.
+    if (std::fflush(block_catalog_output) != 0)
+      throw std::runtime_error("cannot flush interval trace block catalog");
   }
-  // Definitions must leave the userspace buffer before records reference them.
-  // This is incremental process-crash protection, not power-loss durability.
-  if (std::fflush(block_catalog_output) != 0)
-    throw std::runtime_error("cannot flush interval trace block catalog");
   std::ostringstream record;
-  intervaltrace_write_features(record, features, block_ids, wall_cycles ? 2 : 3);
+  intervaltrace_write_features(record, features, block_ids, no_blocks ? 4 : wall_cycles ? 2 : 3);
   const auto data = record.str();
   if (std::fwrite(data.data(), 1, data.size(), interval_output) != data.size() ||
       std::fflush(interval_output) != 0)

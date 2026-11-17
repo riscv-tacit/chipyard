@@ -28,6 +28,8 @@ struct intervaltrace_features {
   uint64_t start_physical_retired = 0, end_physical_retired = 0;
   uint64_t instructions = 0, cycles = 0, attributed_cycles = 0, unattributed_cycles = 0;
   uint64_t physical_retirements = 0, partial_blocks = 0;
+  // Instructions and cycles of the interval's user-mode blocks (privilege 0), on the cycle basis of the blocks.
+  uint64_t user_instructions = 0, user_cycles = 0;
   unsigned flags = 0, bb_flags = 0;
   bool final = false;
   std::map<intervaltrace_block_key, intervaltrace_block_features> blocks;
@@ -43,12 +45,15 @@ struct intervaltrace_features {
  * cycles: a block's cycles are its elapsed cycles minus its stall cycles, and
  * cycle endpoints are snapshot cycles minus the cumulative stall counter. Wall
  * time remains available per interval in counter_deltas.
+ *
+ * Without keep_blocks the per-block measurements are not retained (blocks stays
+ * empty); every other field, including the user-mode sums, is unchanged.
  */
 class intervaltrace_aggregator {
 public:
   using callback_type = std::function<void(const intervaltrace_features &)>;
-  explicit intervaltrace_aggregator(callback_type callback, int64_t stall_counter = -1)
-      : callback(std::move(callback)), stall_counter(stall_counter) {}
+  explicit intervaltrace_aggregator(callback_type callback, int64_t stall_counter = -1, bool keep_blocks = true)
+      : callback(std::move(callback)), stall_counter(stall_counter), keep_blocks(keep_blocks) {}
 
   void consume(unsigned kind, unsigned flags, uint64_t epoch, const std::vector<uint64_t> &w) {
     if (kind == 3) {
@@ -61,13 +66,19 @@ public:
       if (flags & 8) previous = w;
       else pending.push_back({flags, w});
     } else if (kind == 1) {
-      auto &block = current.blocks[{w[0], w[1], flags >> 13, flags & 6u}];
       const uint64_t cycles = stall_counter >= 0 ? w[3] - w[4] : w[3]; // decoder checked w[4] <= w[3]
-      block.instructions += w[2];
-      block.cycles += cycles;
-      ++block.executions;
+      if (keep_blocks) {
+        auto &block = current.blocks[{w[0], w[1], flags >> 13, flags & 6u}];
+        block.instructions += w[2];
+        block.cycles += cycles;
+        ++block.executions;
+      }
       current.instructions += w[2];
       current.attributed_cycles += cycles;
+      if ((flags >> 13) == 0) {
+        current.user_instructions += w[2];
+        current.user_cycles += cycles;
+      }
       current.partial_blocks += bool(flags & 6);
       current.bb_flags |= flags;
       if (flags & 1) emit(false);
@@ -113,6 +124,7 @@ private:
   }
   callback_type callback;
   const int64_t stall_counter;
+  const bool keep_blocks;
   intervaltrace_features current;
   std::vector<uint64_t> previous;
   std::deque<snapshot> pending;

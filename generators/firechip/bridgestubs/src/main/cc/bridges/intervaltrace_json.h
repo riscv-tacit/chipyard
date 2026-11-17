@@ -7,14 +7,17 @@
 #include <ostream>
 #include <stdexcept>
 
-// Writes one interval in interval JSONL version `version` (2 or 3). Blocks are
+// Writes one interval in interval JSONL version `version` (2, 3 or 4). Blocks are
 // referenced by their capture-local IDs, which the driver defines in the
 // incrementally written catalog. Version 3 equals version 2, except that with a
 // stall event in the catalog every cycle field excludes stall cycles (see
 // intervaltrace_aggregator); version 2 cycle fields are elapsed (wall) cycles.
+// Version 4 (+interval-trace-no-blocks) has the fields and cycle basis of version
+// 3 without `blocks`, plus `user_instructions` and `user_cycles`, the sums over
+// the interval's user-mode blocks; it needs no block catalog.
 inline void intervaltrace_write_features(std::ostream &out, const intervaltrace_features &f,
     const std::map<intervaltrace_block_key, uint64_t> &block_ids, int version = 3) {
-  if (version != 2 && version != 3) throw std::invalid_argument("interval JSONL version must be 2 or 3");
+  if (version < 2 || version > 4) throw std::invalid_argument("interval JSONL version must be 2, 3 or 4");
   out << "{\"interval_format_version\":" << version << ',';
 #define FIELD(name) out << "\"" #name "\":" << f.name << ','
   FIELD(epoch); FIELD(snapshot_id); FIELD(nominal_interval);
@@ -22,6 +25,7 @@ inline void intervaltrace_write_features(std::ostream &out, const intervaltrace_
   FIELD(start_physical_retired); FIELD(end_physical_retired);
   FIELD(instructions); FIELD(cycles); FIELD(attributed_cycles); FIELD(unattributed_cycles);
   FIELD(physical_retirements); FIELD(partial_blocks); FIELD(flags); FIELD(bb_flags);
+  if (version == 4) { FIELD(user_instructions); FIELD(user_cycles); }
 #undef FIELD
   out << "\"ipc\":";
   if (f.cycles)
@@ -36,6 +40,10 @@ inline void intervaltrace_write_features(std::ostream &out, const intervaltrace_
     if (comma) out << ',';
     comma = true;
     out << value;
+  }
+  if (version == 4) {
+    out << "]}\n";
+    return;
   }
   out << "],\"blocks\":[";
   comma = false;
